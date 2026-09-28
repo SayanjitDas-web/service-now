@@ -41,6 +41,7 @@ export default function ListView({ tableName }: ListViewProps) {
     listColumns,
     setListColumnsForTable,
     deleteIncident,
+    deleteRecord,
   } = usePlatform();
 
   // State
@@ -211,9 +212,7 @@ export default function ListView({ tableName }: ListViewProps) {
 
   const handleDeleteSelected = () => {
     if (confirm(`Are you sure you want to delete ${selectedRowIds.length} selected record(s)?`)) {
-      if (tableName === 'incident') {
-        selectedRowIds.forEach((id) => deleteIncident(id));
-      }
+      selectedRowIds.forEach((id) => deleteRecord(tableName, id));
       setSelectedRowIds([]);
     }
   };
@@ -392,7 +391,7 @@ export default function ListView({ tableName }: ListViewProps) {
         {quickSearchText && (
           <>
             <span className="sn-crumb-separator">&gt;</span>
-            <span className="sn-crumb-chip">Keyword: "{quickSearchText}"</span>
+            <span className="sn-crumb-chip">Keyword: &quot;{quickSearchText}&quot;</span>
           </>
         )}
       </div>

@@ -45,6 +45,7 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
     clientScripts,
     saveIncident,
     deleteIncident,
+    deleteRecord,
     saveProblem,
     saveChange,
     saveCustomRecord,
@@ -100,18 +101,11 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [mandatoryFields, setMandatoryFields] = useState<Record<string, boolean>>({
     short_description: true,
-    caller_id: true,
+    caller_id: tableName === 'incident',
   });
 
   const currentTableDef = tables.find((t) => t.name === tableName);
   const tableLabel = currentTableDef?.label || tableName;
-
-  // Sync state if originalRecord changes
-  useEffect(() => {
-    if (originalRecord) {
-      setFormData(originalRecord);
-    }
-  }, [originalRecord]);
 
   // Execute onLoad Client Scripts
   useEffect(() => {
@@ -122,7 +116,7 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
 
     const schemaRules: any = {
       short_description: { mandatory: true },
-      caller_id: { mandatory: true },
+      caller_id: { mandatory: tableName === 'incident' },
     };
 
     const sandbox = createGForm(formData, schemaRules, currentUser);
@@ -132,10 +126,10 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
     });
 
     if (sandbox.infoMessages.length > 0) {
-      setInfoMessages((prev) => [...prev, ...sandbox.infoMessages]);
+      setTimeout(() => setInfoMessages((prev) => [...prev, ...sandbox.infoMessages]), 0);
     }
     if (sandbox.errorMessages.length > 0) {
-      setErrorMessages((prev) => [...prev, ...sandbox.errorMessages]);
+      setTimeout(() => setErrorMessages((prev) => [...prev, ...sandbox.errorMessages]), 0);
     }
   }, [tableName]);
 
@@ -177,14 +171,22 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
   const handleSave = (andClose: boolean = false) => {
     // Validate mandatory fields
     const missing: string[] = [];
-    if (mandatoryFields.short_description && !formData.short_description?.trim()) {
-      missing.push('Short description');
-    }
-    if (mandatoryFields.caller_id && !formData.caller_id) {
-      missing.push('Caller');
-    }
-    if (mandatoryFields.close_notes && !formData.close_notes?.trim()) {
-      missing.push('Resolution notes');
+    if (currentTableDef?.is_custom) {
+      currentTableDef.columns.forEach((col) => {
+        if ((col.mandatory || mandatoryFields[col.name]) && !formData[col.name]) {
+          missing.push(col.label);
+        }
+      });
+    } else {
+      if (mandatoryFields.short_description && !formData.short_description?.trim()) {
+        missing.push('Short description');
+      }
+      if (tableName === 'incident' && mandatoryFields.caller_id && !formData.caller_id) {
+        missing.push('Caller');
+      }
+      if (mandatoryFields.close_notes && !formData.close_notes?.trim()) {
+        missing.push('Resolution notes');
+      }
     }
 
     if (missing.length > 0) {
@@ -239,9 +241,7 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
 
   const handleDelete = () => {
     if (confirm(`Are you sure you want to permanently delete record ${formData.number || formData.sys_id}?`)) {
-      if (tableName === 'incident') {
-        deleteIncident(formData.sys_id);
-      }
+      deleteRecord(tableName, formData.sys_id);
       openList(tableName);
     }
   };
@@ -496,8 +496,79 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
 
       {/* Main Form Fields Grid */}
       <div className="sn-form-body">
-        <div className="sn-form-grid">
-          {/* Left Column */}
+        {currentTableDef?.is_custom ? (
+          <div className="sn-form-grid">
+            <div className="sn-form-group">
+              <label className="sn-field-label">Sys ID</label>
+              <input
+                type="text"
+                className="sn-field-input read-only"
+                value={formData.sys_id || '(Auto-generated)'}
+                readOnly
+              />
+            </div>
+            {currentTableDef.columns.map((col) => {
+              if (col.name === 'sys_id') return null;
+              return (
+                <div
+                  key={col.name}
+                  className={`sn-form-group ${col.type === 'journal' ? 'full-width' : ''}`}
+                >
+                  <label className="sn-field-label">
+                    {col.mandatory && <span className="sn-mandatory-asterisk">*</span>}
+                    {col.label}
+                  </label>
+                  {col.type === 'choice' ? (
+                    <select
+                      className="sn-field-select"
+                      value={formData[col.name] ?? col.default_value ?? ''}
+                      onChange={(e) => handleFieldChange(col.name, e.target.value)}
+                    >
+                      <option value="">-- None --</option>
+                      {col.choices?.map((ch) => (
+                        <option key={ch.value} value={ch.value}>
+                          {ch.label}
+                        </option>
+                      ))}
+                    </select>
+                  ) : col.type === 'boolean' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', height: '32px' }}>
+                      <input
+                        type="checkbox"
+                        checked={!!formData[col.name]}
+                        onChange={(e) => handleFieldChange(col.name, e.target.checked)}
+                        style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                      />
+                    </div>
+                  ) : col.type === 'journal' ? (
+                    <textarea
+                      className="sn-field-textarea"
+                      rows={3}
+                      value={formData[col.name] || ''}
+                      onChange={(e) => handleFieldChange(col.name, e.target.value)}
+                    />
+                  ) : col.type === 'integer' ? (
+                    <input
+                      type="number"
+                      className="sn-field-input"
+                      value={formData[col.name] ?? ''}
+                      onChange={(e) => handleFieldChange(col.name, Number(e.target.value))}
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      className="sn-field-input"
+                      value={formData[col.name] ?? ''}
+                      onChange={(e) => handleFieldChange(col.name, e.target.value)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="sn-form-grid">
+            {/* Left Column */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {/* Number */}
             <div className="sn-form-group">
@@ -774,6 +845,7 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
             />
           </div>
         </div>
+        )}
 
         {/* Form Sections Tabs: Notes, Related Records, Resolution Information */}
         <div className="sn-form-tabs">

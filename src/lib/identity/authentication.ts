@@ -126,13 +126,17 @@ export async function signInWithUserName(
     // 3. Track failed attempts; lock the sys_user record at threshold.
     const nextCount = (profile.failed_login_count ?? 0) + 1;
     const shouldLock = nextCount >= MAX_FAILED_LOGINS;
-    await sb
-      .from('sys_user')
-      .update({
-        failed_login_count: nextCount,
-        ...(shouldLock ? { locked_out: true } : {}),
-      })
-      .eq('id', profile.id);
+    try {
+      await sb.rpc('sys_record_failed_login', { p_user_name: profile.user_name });
+    } catch {
+      await sb
+        .from('sys_user')
+        .update({
+          failed_login_count: nextCount,
+          ...(shouldLock ? { locked_out: true } : {}),
+        })
+        .eq('id', profile.id);
+    }
     if (shouldLock) {
       return {
         ok: false,

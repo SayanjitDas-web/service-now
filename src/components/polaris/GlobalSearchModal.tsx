@@ -128,12 +128,12 @@ export default function GlobalSearchModal({ onClose }: GlobalSearchModalProps) {
             <div style={{ textAlign: 'center', padding: '30px 10px', color: '#94a3b8' }}>
               <p style={{ fontSize: '13px', fontWeight: 500 }}>Global Search (Polaris AI / Zing Engine)</p>
               <p style={{ fontSize: '12px', marginTop: '6px' }}>
-                Try searching for: <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('outlook')}>"outlook"</span>, <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('vpn')}>"vpn"</span>, <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('laptop')}>"laptop"</span>, or <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('INC0010001')}>"INC0010001"</span>
+                Try searching for: <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('outlook')}>&quot;outlook&quot;</span>, <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('vpn')}>&quot;vpn&quot;</span>, <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('laptop')}>&quot;laptop&quot;</span>, or <span style={{ color: '#00a389', cursor: 'pointer' }} onClick={() => setQuery('INC0010001')}>&quot;INC0010001&quot;</span>
               </p>
             </div>
           ) : totalResults === 0 ? (
             <div style={{ textAlign: 'center', padding: '30px 10px', color: '#94a3b8' }}>
-              <p>No records or catalog items match "{query}".</p>
+              <p>No records or catalog items match &quot;{query}&quot;.</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>

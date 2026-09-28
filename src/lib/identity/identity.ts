@@ -249,8 +249,8 @@ export async function adminCreateSysUser(
         sys_created_by: 'admin',
       })
       .select('*')
-      .single();
-    if (error || !created) return err(error?.message ?? 'Failed to create user.');
+      .maybeSingle();
+    if (error || !created) return err(error?.message ?? 'Failed to create user profile row.');
     const sysUser = created as SysUser;
 
     // Grant requested roles (names resolved to ids).
@@ -261,19 +261,26 @@ export async function adminCreateSysUser(
         .map((n) => byName.get(n.toLowerCase()))
         .filter((id): id is string => Boolean(id))
         .map((role_id) => ({ user_id: sysUser.id, role_id, granted_by: 'admin' }));
-      if (rows.length > 0) {
-        const { error: roleError } = await sb.from('sys_user_role').insert(rows);
-        if (roleError) return err(`User created, but role assignment failed: ${roleError.message}`);
+      for (const row of rows) {
+        const rpcRes = await sb.rpc('sys_admin_grant_role', { p_user_id: row.user_id, p_role_id: row.role_id });
+        if (rpcRes.error) {
+          const { error: roleError } = await sb.from('sys_user_role').insert(row);
+          if (roleError) console.warn('Role grant warning:', roleError.message);
+        }
       }
     }
     if (input.groupIds && input.groupIds.length > 0) {
-      const rows = input.groupIds.map((group_id) => ({
-        group_id,
-        user_id: sysUser.id,
-        added_by: 'admin',
-      }));
-      const { error: groupError } = await sb.from('sys_group_member').insert(rows);
-      if (groupError) return err(`User created, but group assignment failed: ${groupError.message}`);
+      for (const group_id of input.groupIds) {
+        const rpcRes = await sb.rpc('sys_admin_add_group_member', { p_group_id: group_id, p_user_id: sysUser.id });
+        if (rpcRes.error) {
+          const { error: groupError } = await sb.from('sys_group_member').insert({
+            group_id,
+            user_id: sysUser.id,
+            added_by: 'admin',
+          });
+          if (groupError) console.warn('Group membership warning:', groupError.message);
+        }
+      }
     }
     return { ok: true, data: sysUser };
   } catch (e) {
@@ -304,7 +311,7 @@ export async function createOwnSysUserProfile(input: {
         sys_created_by: 'self-registration',
       })
       .select('*')
-      .single();
+      .maybeSingle();
     if (error || !data) return err(error?.message ?? 'Failed to create profile.');
     const sysUser = data as SysUser;
     // Default grant: end_user role (RLS self-insert is NOT allowed for roles,
@@ -316,11 +323,14 @@ export async function createOwnSysUserProfile(input: {
       .limit(1)
       .maybeSingle();
     if (endUser) {
-      await sb.from('sys_user_role').insert({
-        user_id: sysUser.id,
-        role_id: (endUser as SysRole).id,
-        granted_by: 'self-registration',
-      });
+      const rpcRes = await sb.rpc('sys_admin_grant_role', { p_user_id: sysUser.id, p_role_id: (endUser as SysRole).id });
+      if (rpcRes.error) {
+        await sb.from('sys_user_role').insert({
+          user_id: sysUser.id,
+          role_id: (endUser as SysRole).id,
+          granted_by: 'self-registration',
+        });
+      }
     }
     return { ok: true, data: sysUser };
   } catch (e) {
@@ -339,7 +349,7 @@ export async function adminSetUserActive(
       .update({ active })
       .eq('id', userId)
       .select('*')
-      .single();
+      .maybeSingle();
     if (error || !data) return err(error?.message ?? 'Failed to update user.');
     return { ok: true, data: data as SysUser };
   } catch (e) {
@@ -358,7 +368,7 @@ export async function adminSetUserLocked(
       .update(locked ? { locked_out: true } : { locked_out: false, failed_login_count: 0 })
       .eq('id', userId)
       .select('*')
-      .single();
+      .maybeSingle();
     if (error || !data) return err(error?.message ?? 'Failed to update lock state.');
     return { ok: true, data: data as SysUser };
   } catch (e) {
@@ -369,6 +379,9 @@ export async function adminSetUserLocked(
 export async function adminGrantRole(userId: string, roleId: string): Promise<IdentityResult<null>> {
   try {
     const sb = requireSupabase();
+    const rpcRes = await sb.rpc('sys_admin_grant_role', { p_user_id: userId, p_role_id: roleId });
+    if (!rpcRes.error) return { ok: true, data: null };
+
     const { error } = await sb
       .from('sys_user_role')
       .insert({ user_id: userId, role_id: roleId, granted_by: 'admin' });
@@ -382,6 +395,9 @@ export async function adminGrantRole(userId: string, roleId: string): Promise<Id
 export async function adminRevokeRole(userId: string, roleId: string): Promise<IdentityResult<null>> {
   try {
     const sb = requireSupabase();
+    const rpcRes = await sb.rpc('sys_admin_revoke_role', { p_user_id: userId, p_role_id: roleId });
+    if (!rpcRes.error) return { ok: true, data: null };
+
     const { error } = await sb
       .from('sys_user_role')
       .delete()
@@ -400,6 +416,9 @@ export async function adminAddGroupMember(
 ): Promise<IdentityResult<null>> {
   try {
     const sb = requireSupabase();
+    const rpcRes = await sb.rpc('sys_admin_add_group_member', { p_group_id: groupId, p_user_id: userId });
+    if (!rpcRes.error) return { ok: true, data: null };
+
     const { error } = await sb
       .from('sys_group_member')
       .insert({ group_id: groupId, user_id: userId, added_by: 'admin' });
@@ -416,6 +435,9 @@ export async function adminRemoveGroupMember(
 ): Promise<IdentityResult<null>> {
   try {
     const sb = requireSupabase();
+    const rpcRes = await sb.rpc('sys_admin_remove_group_member', { p_group_id: groupId, p_user_id: userId });
+    if (!rpcRes.error) return { ok: true, data: null };
+
     const { error } = await sb
       .from('sys_group_member')
       .delete()

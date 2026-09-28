@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
+  Role,
   User,
   Group,
   ConfigurationItem,
@@ -191,6 +192,7 @@ interface PlatformContextType {
   // CRUD & Business Logic
   saveIncident: (incident: Partial<Incident>) => Incident;
   deleteIncident: (sys_id: string) => void;
+  deleteRecord: (table: string, sys_id: string) => void;
   saveProblem: (problem: Partial<Problem>) => Problem;
   saveChange: (change: Partial<ChangeRequest>) => ChangeRequest;
   saveCustomRecord: (table: string, record: any) => any;
@@ -218,6 +220,37 @@ interface PlatformContextType {
 
 const PlatformContext = createContext<PlatformContextType | undefined>(undefined);
 
+function generateSysId(prefix: string): string {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 9)}`;
+}
+
+function generateRandomToken(): string {
+  if (typeof crypto !== 'undefined' && 'getRandomValues' in crypto) {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`;
+}
+
+const DEFAULT_IDENTITY_ROLES: SysRole[] = [
+  { id: 'role_admin', name: 'admin', description: 'System administrator. Full platform access.', sys_created_on: '2026-09-01' },
+  { id: 'role_security_admin', name: 'security_admin', description: 'Elevated security administrator.', sys_created_on: '2026-09-01' },
+  { id: 'role_itil', name: 'itil', description: 'ITIL service desk agent.', sys_created_on: '2026-09-01' },
+  { id: 'role_approver', name: 'approver', description: 'Can approve changes and requests.', sys_created_on: '2026-09-01' },
+  { id: 'role_end_user', name: 'end_user', description: 'Self-service portal user.', sys_created_on: '2026-09-01' },
+  { id: 'role_knowledge', name: 'knowledge', description: 'Can author and publish knowledge.', sys_created_on: '2026-09-01' },
+];
+
+const DEFAULT_IDENTITY_GROUPS: SysGroup[] = INITIAL_GROUPS.map((g) => ({
+  id: g.sys_id,
+  name: g.name,
+  description: g.description,
+  email: g.email || `${g.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}@service-now.simulator`,
+  manager_id: g.manager_id || null,
+  sys_created_on: '2026-09-01',
+}));
+
 export function PlatformProvider({ children }: { children: React.ReactNode }) {
   // Current view state
   const [activeView, setActiveViewInternal] = useState<ActiveViewType>({
@@ -240,8 +273,8 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const [authError, setAuthError] = useState<string | null>(null);
   // ServiceNow-style identity context (Supabase mode only).
   const [identity, setIdentity] = useState<EffectiveIdentity | null>(null);
-  const [identityRoles, setIdentityRoles] = useState<SysRole[]>([]);
-  const [identityGroups, setIdentityGroups] = useState<SysGroup[]>([]);
+  const [identityRoles, setIdentityRoles] = useState<SysRole[]>(DEFAULT_IDENTITY_ROLES);
+  const [identityGroups, setIdentityGroups] = useState<SysGroup[]>(DEFAULT_IDENTITY_GROUPS);
   const identitySource: 'supabase' | 'local' = supabaseConfigured && identity ? 'supabase' : 'local';
 
   // Update Sets & Scope
@@ -429,42 +462,46 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load from LocalStorage on mount
+  // Load from LocalStorage on mount (scheduled asynchronously to avoid cascading renders)
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    try {
-      const savedIncidents = localStorage.getItem('sn_data_incidents');
-      if (savedIncidents) setIncidents(JSON.parse(savedIncidents));
+    const timer = setTimeout(() => {
+      try {
+        const savedIncidents = localStorage.getItem('sn_data_incidents');
+        if (savedIncidents) setIncidents(JSON.parse(savedIncidents));
 
-      const savedTheme = localStorage.getItem('sn_ui_theme');
-      if (savedTheme) setTheme(savedTheme as any);
+        const savedTheme = localStorage.getItem('sn_ui_theme');
+        if (savedTheme) setTheme(savedTheme as any);
 
-      const savedDensity = localStorage.getItem('sn_ui_compact');
-      if (savedDensity) setCompactDensity(JSON.parse(savedDensity));
+        const savedDensity = localStorage.getItem('sn_ui_compact');
+        if (savedDensity) setCompactDensity(JSON.parse(savedDensity));
 
-      const savedCols = localStorage.getItem('sn_list_columns');
-      if (savedCols) setListColumns(JSON.parse(savedCols));
+        const savedCols = localStorage.getItem('sn_list_columns');
+        if (savedCols) setListColumns(JSON.parse(savedCols));
 
-      const savedTables = localStorage.getItem('sn_data_tables');
-      if (savedTables) setTables(JSON.parse(savedTables));
+        const savedTables = localStorage.getItem('sn_data_tables');
+        if (savedTables) setTables(JSON.parse(savedTables));
 
-      const savedScripts = localStorage.getItem('sn_data_client_scripts');
-      if (savedScripts) setClientScripts(JSON.parse(savedScripts));
+        const savedScripts = localStorage.getItem('sn_data_client_scripts');
+        if (savedScripts) setClientScripts(JSON.parse(savedScripts));
 
-      const savedRules = localStorage.getItem('sn_data_business_rules');
-      if (savedRules) setBusinessRules(JSON.parse(savedRules));
+        const savedRules = localStorage.getItem('sn_data_business_rules');
+        if (savedRules) setBusinessRules(JSON.parse(savedRules));
 
-      const savedFlows = localStorage.getItem('sn_data_flows');
-      if (savedFlows) setFlows(JSON.parse(savedFlows));
+        const savedFlows = localStorage.getItem('sn_data_flows');
+        if (savedFlows) setFlows(JSON.parse(savedFlows));
 
-      const savedRequests = localStorage.getItem('sn_data_requests');
-      if (savedRequests) setServiceRequests(JSON.parse(savedRequests));
+        const savedRequests = localStorage.getItem('sn_data_requests');
+        if (savedRequests) setServiceRequests(JSON.parse(savedRequests));
 
-      const savedLogs = localStorage.getItem('sn_data_activity');
-      if (savedLogs) setActivityLogs(JSON.parse(savedLogs));
-    } catch (e) {
-      console.error('Failed to load cached ServiceNow data:', e);
-    }
+        const savedLogs = localStorage.getItem('sn_data_activity');
+        if (savedLogs) setActivityLogs(JSON.parse(savedLogs));
+      } catch (e) {
+        console.error('Failed to load cached ServiceNow data:', e);
+      }
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, []);
 
   // Save changes to localStorage
@@ -640,7 +677,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     void first_name;
     void last_name;
     const newUser: User = {
-      sys_id: 'usr_' + Math.random().toString(36).substring(2, 9),
+      sys_id: generateSysId('usr'),
       user_name: input.user_name.trim(),
       name: input.name.trim(),
       email: input.email.trim(),
@@ -648,12 +685,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       title: 'Self-registered User',
       department: 'Self Service',
     };
-    const salt =
-      typeof crypto !== 'undefined' && 'getRandomValues' in crypto
-        ? Array.from(crypto.getRandomValues(new Uint8Array(16)))
-            .map((b) => b.toString(16).padStart(2, '0'))
-            .join('')
-        : Math.random().toString(36).substring(2);
+    const salt = generateRandomToken();
     const passwordHash = await hashPassword(input.password, salt);
     const vault = loadCredentials();
     vault[newUser.user_name.toLowerCase()] = {
@@ -899,14 +931,10 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     return userCanAccessView(currentUser, viewType, table);
   };
 
-  // -- Admin: user/role/group management (Supabase-backed) --------------------
+  // -- Admin: user/role/group management (Supabase-backed + local fallback) ---
   const requireAdmin = (): boolean => {
     if (!isAdmin) {
       setAuthError('Only administrators can manage users, roles and groups.');
-      return false;
-    }
-    if (!getSupabase()) {
-      setAuthError('User administration requires Supabase. Connect your project first.');
       return false;
     }
     return true;
@@ -929,109 +957,182 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       setAuthError(pwErr);
       return false;
     }
-    // 1. Create the Auth account (credentials holder).
-    const { signUpAuthAccount: signUp } = await import('./identity/authentication');
-    const signUpRes = await signUp({
-      user_name: input.user_name.trim(),
-      email: input.email.trim(),
-      password: input.password,
-      first_name: input.first_name.trim(),
-      last_name: input.last_name.trim(),
-    });
-    if (!signUpRes.ok) {
-      setAuthError(signUpRes.error);
+
+    if (identitySource !== 'supabase') {
+      if (findUserByName(input.user_name)) {
+        setAuthError('That User ID is already taken.');
+        return false;
+      }
+      const fullName = `${input.first_name.trim()} ${input.last_name.trim()}`.trim() || input.user_name.trim();
+      const userRoles: Role[] = (input.roleNames && input.roleNames.length > 0)
+        ? (input.roleNames.map((r) => r.toLowerCase() as Role))
+        : ['end_user'];
+      const newUser: User = {
+        sys_id: generateSysId('usr'),
+        user_name: input.user_name.trim(),
+        name: fullName,
+        email: input.email.trim(),
+        roles: userRoles,
+        title: input.title || 'User',
+        department: input.department || 'Enterprise Support',
+      };
+      const salt = generateRandomToken();
+      const passwordHash = await hashPassword(input.password, salt);
+      const vault = loadCredentials();
+      vault[newUser.user_name.toLowerCase()] = {
+        userName: newUser.user_name.toLowerCase(),
+        sysId: newUser.sys_id,
+        salt,
+        passwordHash,
+      };
+      saveCredentials(vault);
+      const nextCustom = [...customUsers, newUser];
+      setCustomUsers(nextCustom);
+      saveCustomUsers(nextCustom);
+      return true;
+    }
+
+    try {
+      // 1. Create the Auth account (credentials holder).
+      const { signUpAuthAccount: signUp } = await import('./identity/authentication');
+      const signUpRes = await signUp({
+        user_name: input.user_name.trim(),
+        email: input.email.trim(),
+        password: input.password,
+        first_name: input.first_name.trim(),
+        last_name: input.last_name.trim(),
+      });
+      if (!signUpRes.ok) {
+        setAuthError(signUpRes.error);
+        return false;
+      }
+      // 2. Create the sys_user profile (+ roles/groups).
+      const created = await svcCreateSysUser({
+        user_name: input.user_name.trim(),
+        email: input.email.trim(),
+        first_name: input.first_name.trim(),
+        last_name: input.last_name.trim(),
+        department: input.department,
+        title: input.title,
+        auth_user_id: signUpRes.authUserId,
+        roleNames: input.roleNames,
+        groupIds: input.groupIds,
+      });
+      if (!created.ok) {
+        setAuthError(created.error);
+        return false;
+      }
+      await loadDirectory();
+      return true;
+    } catch (err: any) {
+      setAuthError(err?.message || 'Failed to create user in Supabase directory.');
       return false;
     }
-    // 2. Create the sys_user profile (+ roles/groups).
-    const created = await svcCreateSysUser({
-      user_name: input.user_name.trim(),
-      email: input.email.trim(),
-      first_name: input.first_name.trim(),
-      last_name: input.last_name.trim(),
-      department: input.department,
-      title: input.title,
-      auth_user_id: signUpRes.authUserId,
-      roleNames: input.roleNames,
-      groupIds: input.groupIds,
-    });
-    if (!created.ok) {
-      setAuthError(created.error);
-      return false;
-    }
-    await loadDirectory();
-    return true;
   };
 
   const adminSetUserActive = async (userId: string, active: boolean): Promise<boolean> => {
     setAuthError(null);
     if (!requireAdmin()) return false;
-    const res = await svcSetUserActive(userId, active);
-    if (!res.ok) {
-      setAuthError(res.error);
-      return false;
+    if (identitySource === 'supabase') {
+      const res = await svcSetUserActive(userId, active);
+      if (!res.ok) {
+        setAuthError(res.error);
+        return false;
+      }
+      await loadDirectory();
+      await refreshIdentity();
     }
-    await loadDirectory();
-    await refreshIdentity();
     return true;
   };
 
   const adminSetUserLocked = async (userId: string, locked: boolean): Promise<boolean> => {
     setAuthError(null);
     if (!requireAdmin()) return false;
-    const res = await svcSetUserLocked(userId, locked);
-    if (!res.ok) {
-      setAuthError(res.error);
-      return false;
+    if (identitySource === 'supabase') {
+      const res = await svcSetUserLocked(userId, locked);
+      if (!res.ok) {
+        setAuthError(res.error);
+        return false;
+      }
+      await loadDirectory();
     }
-    await loadDirectory();
     return true;
   };
 
   const adminGrantRole = async (userId: string, roleId: string): Promise<boolean> => {
     setAuthError(null);
     if (!requireAdmin()) return false;
-    const res = await svcGrantRole(userId, roleId);
-    if (!res.ok) {
-      setAuthError(res.error);
-      return false;
+    const roleObj = identityRoles.find((r) => r.id === roleId);
+    const roleName = (roleObj?.name || roleId).toLowerCase() as Role;
+    setCustomUsers((prev) =>
+      prev.map((u) => {
+        if (u.sys_id === userId) {
+          const roles = u.roles.includes(roleName) ? u.roles : [...u.roles, roleName];
+          return { ...u, roles };
+        }
+        return u;
+      })
+    );
+    if (identitySource === 'supabase') {
+      const res = await svcGrantRole(userId, roleId);
+      if (!res.ok) {
+        setAuthError(res.error);
+        return false;
+      }
+      await refreshIdentity();
     }
-    await refreshIdentity();
     return true;
   };
 
   const adminRevokeRole = async (userId: string, roleId: string): Promise<boolean> => {
     setAuthError(null);
     if (!requireAdmin()) return false;
-    const res = await svcRevokeRole(userId, roleId);
-    if (!res.ok) {
-      setAuthError(res.error);
-      return false;
+    const roleObj = identityRoles.find((r) => r.id === roleId);
+    const roleName = (roleObj?.name || roleId).toLowerCase() as Role;
+    setCustomUsers((prev) =>
+      prev.map((u) => {
+        if (u.sys_id === userId) {
+          return { ...u, roles: u.roles.filter((r) => r !== roleName) };
+        }
+        return u;
+      })
+    );
+    if (identitySource === 'supabase') {
+      const res = await svcRevokeRole(userId, roleId);
+      if (!res.ok) {
+        setAuthError(res.error);
+        return false;
+      }
+      await refreshIdentity();
     }
-    await refreshIdentity();
     return true;
   };
 
   const adminAddGroupMember = async (groupId: string, userId: string): Promise<boolean> => {
     setAuthError(null);
     if (!requireAdmin()) return false;
-    const res = await svcAddGroupMember(groupId, userId);
-    if (!res.ok) {
-      setAuthError(res.error);
-      return false;
+    if (identitySource === 'supabase') {
+      const res = await svcAddGroupMember(groupId, userId);
+      if (!res.ok) {
+        setAuthError(res.error);
+        return false;
+      }
+      await refreshIdentity();
     }
-    await refreshIdentity();
     return true;
   };
 
   const adminRemoveGroupMember = async (groupId: string, userId: string): Promise<boolean> => {
     setAuthError(null);
     if (!requireAdmin()) return false;
-    const res = await svcRemoveGroupMember(groupId, userId);
-    if (!res.ok) {
-      setAuthError(res.error);
-      return false;
+    if (identitySource === 'supabase') {
+      const res = await svcRemoveGroupMember(groupId, userId);
+      if (!res.ok) {
+        setAuthError(res.error);
+        return false;
+      }
+      await refreshIdentity();
     }
-    await refreshIdentity();
     return true;
   };
 
@@ -1058,7 +1159,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   ) => {
     if (!currentUpdateSet) return;
     const newChange = {
-      sys_id: 'chg_' + Math.random().toString(36).substring(2, 9),
+      sys_id: generateSysId('chg'),
       type,
       target_name: targetName,
       action,
@@ -1080,7 +1181,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
   const createUpdateSet = (name: string, app: string = 'Global'): UpdateSet => {
     const newUS: UpdateSet = {
-      sys_id: 'us_' + Math.random().toString(36).substring(2, 9),
+      sys_id: generateSysId('us'),
       name,
       state: 'in_progress',
       application: app,
@@ -1148,7 +1249,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     if (isNew) {
       const nextNum = 10000 + incidents.length + 1;
       const newInc: Incident = {
-        sys_id: 'inc_' + Math.random().toString(36).substring(2, 9),
+        sys_id: generateSysId('inc'),
         number: `INC00${nextNum}`,
         short_description: incidentData.short_description || 'New Incident',
         description: incidentData.description || '',
@@ -1230,12 +1331,40 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     return saved;
   };
 
-  const deleteIncident = (sys_id: string) => {
-    setIncidents((prev) => prev.filter((i) => i.sys_id !== sys_id));
+  const deleteRecord = (table: string, sys_id: string) => {
+    switch (table) {
+      case 'incident':
+        setIncidents((prev) => prev.filter((i) => i.sys_id !== sys_id));
+        break;
+      case 'problem':
+        setProblems((prev) => prev.filter((p) => p.sys_id !== sys_id));
+        break;
+      case 'change_request':
+        setChanges((prev) => prev.filter((c) => c.sys_id !== sys_id));
+        break;
+      case 'sc_req_item':
+        setServiceRequests((prev) => prev.filter((r) => r.sys_id !== sys_id));
+        break;
+      case 'kb_knowledge':
+        setKnowledgeArticles((prev) => prev.filter((k) => k.sys_id !== sys_id));
+        break;
+      default:
+        setCustomRecords((prev) => ({
+          ...prev,
+          [table]: (prev[table] || []).filter((r: any) => r.sys_id !== sys_id),
+        }));
+        break;
+    }
+
     const supabase = getSupabase();
     if (supabase) {
-      supabase.from('sn_incidents').delete().eq('sys_id', sys_id).then();
+      const dbTable = table === 'incident' ? 'sn_incidents' : table;
+      supabase.from(dbTable).delete().eq('sys_id', sys_id).then();
     }
+  };
+
+  const deleteIncident = (sys_id: string) => {
+    deleteRecord('incident', sys_id);
   };
 
   const saveProblem = (probData: Partial<Problem>): Problem => {
@@ -1246,7 +1375,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     if (isNew) {
       const nextNum = 100 + problems.length + 1;
       saved = {
-        sys_id: 'prb_' + Math.random().toString(36).substring(2, 9),
+        sys_id: generateSysId('prb'),
         number: `PRB000${nextNum}`,
         short_description: probData.short_description || 'New Problem',
         description: probData.description || '',
@@ -1279,7 +1408,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     if (isNew) {
       const nextNum = 30000 + changes.length + 1;
       saved = {
-        sys_id: 'chg_' + Math.random().toString(36).substring(2, 9),
+        sys_id: generateSysId('chg'),
         number: `CHG00${nextNum}`,
         short_description: chgData.short_description || 'New Change Request',
         description: chgData.description || '',
@@ -1309,7 +1438,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
   const saveCustomRecord = (table: string, record: any) => {
     const isNew = !record.sys_id || record.sys_id === 'new';
-    const sys_id = isNew ? 'rec_' + Math.random().toString(36).substring(2, 9) : record.sys_id;
+    const sys_id = isNew ? generateSysId('rec') : record.sys_id;
     const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
     const updated = { ...record, sys_id, sys_updated_on: now, sys_created_on: record.sys_created_on || now };
 
@@ -1338,7 +1467,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     const isNew = !script.sys_id || script.sys_id === 'new';
     const targetScript = {
       ...script,
-      sys_id: isNew ? 'cs_' + Math.random().toString(36).substring(2, 9) : script.sys_id,
+      sys_id: isNew ? generateSysId('cs') : script.sys_id,
     };
     setClientScripts((prev) =>
       isNew ? [targetScript, ...prev] : prev.map((s) => (s.sys_id === targetScript.sys_id ? targetScript : s))
@@ -1350,7 +1479,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     const isNew = !rule.sys_id || rule.sys_id === 'new';
     const targetRule = {
       ...rule,
-      sys_id: isNew ? 'br_' + Math.random().toString(36).substring(2, 9) : rule.sys_id,
+      sys_id: isNew ? generateSysId('br') : rule.sys_id,
     };
     setBusinessRules((prev) =>
       isNew ? [targetRule, ...prev] : prev.map((r) => (r.sys_id === targetRule.sys_id ? targetRule : r))
@@ -1362,7 +1491,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     const isNew = !flow.sys_id || flow.sys_id === 'new';
     const targetFlow = {
       ...flow,
-      sys_id: isNew ? 'flow_' + Math.random().toString(36).substring(2, 9) : flow.sys_id,
+      sys_id: isNew ? generateSysId('flow') : flow.sys_id,
     };
     setFlows((prev) =>
       isNew ? [targetFlow, ...prev] : prev.map((f) => (f.sys_id === targetFlow.sys_id ? targetFlow : f))
@@ -1376,7 +1505,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
     const newReq: ServiceRequest = {
-      sys_id: 'req_' + Math.random().toString(36).substring(2, 9),
+      sys_id: generateSysId('req'),
       number: `REQ00${10000 + count}`,
       ritm_number: `RITM00${10000 + count}`,
       sctask_number: `SCTASK00${10000 + count}`,
@@ -1411,7 +1540,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const addActivityLog = (log: Omit<ActivityLog, 'sys_id' | 'created_at'>) => {
     const newLog: ActivityLog = {
       ...log,
-      sys_id: 'act_' + Math.random().toString(36).substring(2, 9),
+      sys_id: generateSysId('act'),
       created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
     };
     setActivityLogs((prev) => [newLog, ...prev]);
@@ -1420,7 +1549,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const addAttachment = (att: Omit<Attachment, 'sys_id' | 'created_at'>): Attachment => {
     const newAtt: Attachment = {
       ...att,
-      sys_id: 'att_' + Math.random().toString(36).substring(2, 9),
+      sys_id: generateSysId('att'),
       created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
     };
     setAttachments((prev) => [newAtt, ...prev]);
@@ -1535,6 +1664,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         attachments,
         saveIncident,
         deleteIncident,
+        deleteRecord,
         saveProblem,
         saveChange,
         saveCustomRecord,

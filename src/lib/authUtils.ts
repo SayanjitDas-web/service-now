@@ -167,7 +167,8 @@ export type AdminOnlyView =
   | 'business_rules'
   | 'flow_designer'
   | 'tables_dictionary'
-  | 'update_sets';
+  | 'update_sets'
+  | 'user_administration';
 
 export const ADMIN_ONLY_VIEWS: AdminOnlyView[] = [
   'script_background',
@@ -176,6 +177,7 @@ export const ADMIN_ONLY_VIEWS: AdminOnlyView[] = [
   'flow_designer',
   'tables_dictionary',
   'update_sets',
+  'user_administration',
 ];
 
 export function userHasRole(user: User | null | undefined, role: Role): boolean {

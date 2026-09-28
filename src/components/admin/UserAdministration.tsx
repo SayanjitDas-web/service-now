@@ -25,6 +25,7 @@ import {
   type SysRole,
   type SysUser,
 } from '@/lib/identity';
+import { FALLBACK_ACLS } from '@/lib/identity/authorization';
 
 type Tab = 'users' | 'roles' | 'groups' | 'access';
 
@@ -41,6 +42,9 @@ export default function UserAdministration() {
     adminRevokeRole,
     adminAddGroupMember,
     adminRemoveGroupMember,
+    users: platformUsers,
+    identityRoles,
+    identityGroups,
   } = usePlatform();
 
   const [tab, setTab] = useState<Tab>('users');
@@ -67,10 +71,53 @@ export default function UserAdministration() {
   const [fRoles, setFRoles] = useState<string[]>(['end_user']);
   const [fGroups, setFGroups] = useState<string[]>([]);
 
-  const supabaseConfigured = Boolean(getSupabase());
+  const isSupabaseActive = identitySource === 'supabase';
 
   const reload = useCallback(async () => {
-    if (!supabaseConfigured) {
+    const populateLocal = () => {
+      const mappedUsers: SysUser[] = platformUsers.map((u) => {
+        const [first, ...rest] = u.name.split(' ');
+        return {
+          id: u.sys_id,
+          auth_user_id: null,
+          user_name: u.user_name,
+          email: u.email,
+          active: true,
+          locked_out: false,
+          failed_login_count: 0,
+          last_login_at: null,
+          first_name: first || u.user_name,
+          last_name: rest.join(' ') || '',
+          department: u.department || '',
+          title: u.title || '',
+          manager_id: null,
+          phone: u.phone || '',
+          location: u.location || '',
+          avatar_url: u.avatar || '',
+          sys_created_on: '2026-09-01',
+          sys_created_by: 'system',
+          sys_updated_on: '2026-09-01',
+        };
+      });
+      setUsers(mappedUsers);
+      setRoles(identityRoles);
+      setGroups(identityGroups);
+      setAcls(
+        FALLBACK_ACLS.map((f, idx) => ({
+          id: `acl_${idx}`,
+          resource: f.resource,
+          operation: f.operation,
+          required_role_id: f.role ? (identityRoles.find((r) => r.name === f.role)?.id || null) : null,
+          required_group_id: null,
+          description: f.role ? `Requires ${f.role}` : 'Public read access',
+          active: true,
+          sys_created_on: '2026-09-01',
+        }))
+      );
+    };
+
+    if (!isSupabaseActive) {
+      populateLocal();
       setLoading(false);
       return;
     }
@@ -82,25 +129,72 @@ export default function UserAdministration() {
         listGroups(),
         listAcls(),
       ]);
-      if (u.ok) setUsers(u.data);
-      if (r.ok) setRoles(r.data);
-      if (g.ok) setGroups(g.data);
-      if (a.ok) setAcls(a.data);
+      if (u.ok && u.data.length > 0) setUsers(u.data);
+      else populateLocal();
+
+      if (r.ok && r.data.length > 0) setRoles(r.data);
+      else setRoles(identityRoles);
+
+      if (g.ok && g.data.length > 0) setGroups(g.data);
+      else setGroups(identityGroups);
+
+      if (a.ok && a.data.length > 0) setAcls(a.data);
+      else setAcls(
+        FALLBACK_ACLS.map((f, idx) => ({
+          id: `acl_${idx}`,
+          resource: f.resource,
+          operation: f.operation,
+          required_role_id: f.role ? (identityRoles.find((r) => r.name === f.role)?.id || null) : null,
+          required_group_id: null,
+          description: f.role ? `Requires ${f.role}` : 'Public read access',
+          active: true,
+          sys_created_on: '2026-09-01',
+        }))
+      );
+    } catch {
+      populateLocal();
     } finally {
       setLoading(false);
     }
-  }, [supabaseConfigured]);
+  }, [isSupabaseActive, platformUsers, identityRoles, identityGroups]);
 
   useEffect(() => {
-    void reload();
+    const timer = setTimeout(() => {
+      void reload();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [reload]);
 
-  const loadSelection = useCallback(async (userId: string) => {
-    setSelectedId(userId);
-    const [r, g] = await Promise.all([getUserRoles(userId), getUserGroups(userId)]);
-    if (r.ok) setSelectedRoles(r.data);
-    if (g.ok) setSelectedGroups(g.data);
-  }, []);
+  const loadSelection = useCallback(
+    async (userId: string) => {
+      setSelectedId(userId);
+      if (!isSupabaseActive) {
+        const found = platformUsers.find((u) => u.sys_id === userId);
+        if (found) {
+          const uRoles = identityRoles.filter((r) =>
+            found.roles.map((name) => name.toLowerCase()).includes(r.name.toLowerCase())
+          );
+          setSelectedRoles(uRoles);
+          setSelectedGroups(identityGroups.slice(0, 1));
+        }
+        return;
+      }
+      try {
+        const [r, g] = await Promise.all([getUserRoles(userId), getUserGroups(userId)]);
+        if (r.ok) setSelectedRoles(r.data);
+        if (g.ok) setSelectedGroups(g.data);
+      } catch {
+        const found = platformUsers.find((u) => u.sys_id === userId);
+        if (found) {
+          const uRoles = identityRoles.filter((r) =>
+            found.roles.map((name) => name.toLowerCase()).includes(r.name.toLowerCase())
+          );
+          setSelectedRoles(uRoles);
+        }
+      }
+    },
+    [isSupabaseActive, platformUsers, identityRoles, identityGroups]
+  );
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -178,7 +272,7 @@ export default function UserAdministration() {
         </div>
       </div>
 
-      {!supabaseConfigured && (
+      {!isSupabaseActive && (
         <div
           style={{
             background: '#fef3c7',
@@ -190,9 +284,9 @@ export default function UserAdministration() {
             marginBottom: '14px',
           }}
         >
-          Supabase is not connected, so the identity directory is unavailable. Set
-          NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY and apply
-          supabase/migrations/0001_servicenow_identity.sql.
+          {getSupabase()
+            ? 'Operating in Local Vault Simulator mode (signed in with local credentials). Changes will persist to your local browser storage.'
+            : 'Supabase is not connected, so the identity directory is running in Local Vault Simulator mode. Changes will persist to your local browser storage.'}
         </div>
       )}
 

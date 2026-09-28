@@ -91,7 +91,7 @@ export default function ConditionBuilder({
 
       {conditions.length === 0 ? (
         <div style={{ fontSize: '12px', color: 'var(--now-text-muted)', fontStyle: 'italic', padding: '6px 0' }}>
-          No conditions applied. Showing all records. Click "+ AND" above to add a filter condition.
+          No conditions applied. Showing all records. Click &quot;+ AND&quot; above to add a filter condition.
         </div>
       ) : (
         conditions.map((cond, idx) => (

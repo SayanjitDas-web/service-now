@@ -26,9 +26,9 @@ export function executeBackgroundScript(
 
   // Clone datasets so modifications can be inspected/applied
   let incidentCopies = JSON.parse(JSON.stringify(platformData.incidents)) as Incident[];
-  let problemCopies = JSON.parse(JSON.stringify(platformData.problems)) as Problem[];
-  let changeCopies = JSON.parse(JSON.stringify(platformData.changes)) as ChangeRequest[];
-  let userCopies = JSON.parse(JSON.stringify(platformData.users)) as User[];
+  const problemCopies = JSON.parse(JSON.stringify(platformData.problems)) as Problem[];
+  const changeCopies = JSON.parse(JSON.stringify(platformData.changes)) as ChangeRequest[];
+  const userCopies = JSON.parse(JSON.stringify(platformData.users)) as User[];
 
   // GlideSystem (gs) emulator
   const gs = {

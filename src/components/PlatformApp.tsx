@@ -155,7 +155,7 @@ function PlatformContent() {
             <>
               {activeView.type === 'list' && <ListView tableName={activeView.table} />}
               {activeView.type === 'form' && (
-                <FormView tableName={activeView.table} sysId={activeView.sys_id} />
+                <FormView key={`${activeView.table}_${activeView.sys_id}`} tableName={activeView.table} sysId={activeView.sys_id} />
               )}
               {activeView.type === 'catalog' && <ServiceCatalogView />}
               {activeView.type === 'script_background' && <ScriptBackground />}
