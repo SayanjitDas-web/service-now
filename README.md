@@ -16,7 +16,8 @@ Built with **Next.js (App Router, Turbopack)**, **Vanilla CSS (Polaris Design Sy
   - **Favorites**: Starred modules and records with quick access.
   - **History**: Chronological audit trail of recently visited records and lists.
   - **Workspaces**: Quick jump to ITSM Agent Workspace and Service Operations Workspace (SOW).
-- **User Impersonation**: Realistic admin impersonation modal to switch personas between *System Administrator*, *Beth Anglin (ITIL)*, *David Loo (Change Manager)*, *Fred Luddy*, and *Abel Tuter (End User)*. Displays the iconic yellow impersonation banner with one-click return.
+- **ServiceNow Identity (Supabase)**: `sys_user` profiles, Supabase Auth sessions, user → group → role → ACL authorization, and an admin Identity Console for users/roles/groups/access.
+- **User Impersonation (admin-only)**: Realistic admin impersonation modal to switch personas between *System Administrator*, *Beth Anglin (ITIL)*, *David Loo (Change Manager)*, *Fred Luddy*, and *Abel Tuter (End User)*. Displays the iconic yellow impersonation banner with one-click return.
 - **Global Zing/AI Search (`Ctrl + K`)**: Unified search across incidents, problems, changes, catalog items, knowledge articles, and users.
 
 ### 2. List View Engine (ServiceNow List v2 / Polaris List)
@@ -103,17 +104,45 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
+## 🔐 ServiceNow-Style Authentication & Identity (Next.js + Supabase)
+
+The platform starts at a **sign-in gate** backed by a ServiceNow-structured
+identity model. Full setup: [`supabase/README.md`](supabase/README.md).
+
+- **Identity** (`sys_user`): `user_name`, `email`, `active`, `locked_out`,
+  `first_name`, `last_name`, `department`, `manager`, `title`, `phone`, `location`.
+  Profiles never store passwords.
+- **Authentication** (Supabase Auth): email + password in `auth.users`,
+  sessions + logout via `supabase.auth`. Login accepts the ServiceNow User ID,
+  resolves it to the Auth email, enforces `active`/`locked_out`, links
+  `auth_user_id` on first sign-in, and locks the account after 5 failures.
+- **Authorization** (user → group → role → ACL): direct `sys_user_role` grants
+  plus inherited roles via `sys_group_member` → `sys_group_role`; every
+  resource/operation (`incident`, `problem`, `change_request`, `sc_req_item`,
+  `kb_knowledge`, `catalog`, `sys_user` × `read/create/update/delete`) is
+  evaluated against `sys_acl` in `src/lib/identity/authorization.ts`, with
+  Supabase RLS as the database backstop. `store.aclCan()` is the shared entry
+  point for all future ITSM modules.
+- **Demo accounts** (create matching Auth users per `supabase/README.md`):
+  - `admin / Admin123!` (admin, security_admin, itil)
+  - `beth.anglin / Beth123!` (itil)
+  - `david.loo / David123!` (itil, approver)
+  - `fred.luddy / Fred123!` (admin, itil)
+  - `abel.tuter / Abel123!` (end_user)
+  - `itil.user / Itil123!` (itil)
+- **Admin console** (admin only): All → User Administration → Identity Console —
+  create users (Auth + profile + roles/groups), activate/deactivate,
+  lock/unlock, grant/revoke roles, add/remove group memberships, and inspect
+  the live ACL matrix.
+- **Account menu** (avatar, top-right): profile + effective roles, Polaris theme,
+  compact density, demo-data reset (admin), and sign out.
+- **Offline fallback**: without Supabase env vars the simulator runs locally
+  (browser vault + mirrored ACL policy) with full functionality.
+
 ## ☁️ Connecting Supabase & ImageKit
 
-### Option A: In-App Configuration (Recommended)
-1. In the top-right header, click the **Settings (Gear icon)**.
-2. In the **Supabase & ImageKit** tab:
-   - Enter your **Supabase URL** and **Anon Key**.
-   - Enter your **ImageKit URL Endpoint** and **Public Key**.
-3. Click **Save Credentials**.
-4. Go to the **SQL Migration Schema** tab, copy the schema, and execute it in your **Supabase SQL Editor** to create the PostgreSQL tables.
+Server-managed only via environment variables (the gear-based in-app editor was removed).
 
-### Option B: Environment Variables
 Create a `.env.local` file based on `.env.example`:
 ```env
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co

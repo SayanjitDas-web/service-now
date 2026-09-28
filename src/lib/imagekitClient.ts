@@ -6,23 +6,10 @@ export interface ImageKitConfig {
 }
 
 export function getImageKitConfig(): ImageKitConfig {
-  if (typeof window !== 'undefined') {
-    const storedUrl = localStorage.getItem('sn_imagekit_url_endpoint');
-    const storedKey = localStorage.getItem('sn_imagekit_public_key');
-    if (storedUrl && storedKey) {
-      return {
-        urlEndpoint: storedUrl,
-        publicKey: storedKey,
-        authenticationEndpoint: '/api/imagekit/auth',
-        isConfigured: true,
-      };
-    }
-  }
-
   const envUrl = process.env.NEXT_PUBLIC_IMAGEKIT_URL_ENDPOINT;
   const envKey = process.env.NEXT_PUBLIC_IMAGEKIT_PUBLIC_KEY;
 
-  if (envUrl && envKey && !envUrl.includes('placeholder')) {
+  if (envUrl && envKey && !envUrl.includes('placeholder') && !envUrl.includes('your_imagekit_id')) {
     return {
       urlEndpoint: envUrl,
       publicKey: envKey,

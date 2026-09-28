@@ -45,7 +45,7 @@ export default function PracticeCenterModal({ onClose }: PracticeCenterModalProp
         'Select "Beth Anglin (beth.anglin)" or "David Loo (david.loo)".',
         'Observe the yellow warning banner confirming impersonation mode.',
       ],
-      hint: 'The Impersonate icon is located on the top right next to Instance Settings.',
+      hint: 'The Impersonate icon is located in the top-right header (administrators only). Sign in as admin to use it.',
       check: (s) => {
         if (s.currentUser.sys_id !== s.actualUser.sys_id) {
           return { passed: true, message: `Successfully impersonating ${s.currentUser.name}!` };

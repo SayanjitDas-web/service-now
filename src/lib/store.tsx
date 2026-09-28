@@ -37,6 +37,46 @@ import {
   INITIAL_ACTIVITY_LOGS,
 } from './initialData';
 import { getSupabase } from './supabaseClient';
+import {
+  hashPassword,
+  loadCredentials,
+  loadCustomUsers,
+  loadSessionUserName,
+  saveCredentials,
+  saveCustomUsers,
+  saveSession,
+  seedDefaultCredentials,
+  userCanAccessView,
+  userIsAdmin,
+  validatePasswordStrength,
+  validateUserName,
+} from './authUtils';
+import {
+  adminAddGroupMember as svcAddGroupMember,
+  adminCreateSysUser as svcCreateSysUser,
+  adminGrantRole as svcGrantRole,
+  adminRemoveGroupMember as svcRemoveGroupMember,
+  adminRevokeRole as svcRevokeRole,
+  adminSetUserActive as svcSetUserActive,
+  adminSetUserLocked as svcSetUserLocked,
+  canOffline,
+  createOwnSysUserProfile,
+  fetchFullIdentity,
+  getSupabaseSession,
+  listSysUsers,
+  onSupabaseAuthStateChange,
+  signInWithUserName as supabaseSignIn,
+  signOutEverywhere,
+  signUpAuthAccount,
+  sysUserDisplayName,
+  toLegacyUser,
+  type AclOperation,
+  type AclResource,
+  type EffectiveIdentity,
+  type SysGroup,
+  type SysRole,
+} from './identity';
+import { ensureIdentitySeed } from './identity/seed';
 
 export type ActiveViewType =
   | { type: 'list'; table: string }
@@ -49,6 +89,7 @@ export type ActiveViewType =
   | { type: 'flow_designer' }
   | { type: 'tables_dictionary' }
   | { type: 'update_sets' }
+  | { type: 'user_administration' }
   | { type: 'practice_center' };
 
 export interface HistoryItem {
@@ -74,12 +115,46 @@ interface PlatformContextType {
   openRecord: (table: string, sys_id: string) => void;
   openList: (table: string) => void;
 
-  // Users & Impersonation
+  // Users, Account Auth & Impersonation
   currentUser: User;
   actualUser: User;
   users: User[];
+  isAuthenticated: boolean;
+  isAuthLoading: boolean;
+  authError: string | null;
+  clearAuthError: () => void;
+  login: (userName: string, password: string) => Promise<boolean>;
+  register: (input: { user_name: string; name: string; email: string; password: string }) => Promise<boolean>;
+  logout: () => void;
   impersonateUser: (user: User) => void;
   endImpersonation: () => void;
+  hasRole: (role: User['roles'][number]) => boolean;
+  isAdmin: boolean;
+  canAccess: (viewType: string, table?: string) => boolean;
+  // ServiceNow-style identity (Supabase-backed when configured).
+  identity: EffectiveIdentity | null;
+  identitySource: 'supabase' | 'local';
+  aclCan: (resource: AclResource, operation: AclOperation) => boolean;
+  refreshIdentity: () => Promise<void>;
+  adminCreateUser: (input: {
+    user_name: string;
+    email: string;
+    first_name: string;
+    last_name: string;
+    password: string;
+    department?: string;
+    title?: string;
+    roleNames?: string[];
+    groupIds?: string[];
+  }) => Promise<boolean>;
+  adminSetUserActive: (userId: string, active: boolean) => Promise<boolean>;
+  adminSetUserLocked: (userId: string, locked: boolean) => Promise<boolean>;
+  adminGrantRole: (userId: string, roleId: string) => Promise<boolean>;
+  adminRevokeRole: (userId: string, roleId: string) => Promise<boolean>;
+  adminAddGroupMember: (groupId: string, userId: string) => Promise<boolean>;
+  adminRemoveGroupMember: (groupId: string, userId: string) => Promise<boolean>;
+  identityRoles: SysRole[];
+  identityGroups: SysGroup[];
 
   // Environment Scope & Update Sets
   currentScope: string;
@@ -150,10 +225,24 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     table: 'incident',
   });
 
-  // User state
-  const [users, setUsers] = useState<User[]>(INITIAL_USERS);
+  // User & account auth state.
+  // No default session: the login gate must authenticate first.
+  // Supabase Auth is primary when configured; the local vault is the
+  // offline fallback so the simulator works without a backend.
+  const supabaseConfigured = Boolean(getSupabase());
+  const [customUsers, setCustomUsers] = useState<User[]>([]);
+  const [directoryUsers, setDirectoryUsers] = useState<User[] | null>(null);
+  const users: User[] = directoryUsers ?? [...INITIAL_USERS, ...customUsers];
   const [actualUser, setActualUser] = useState<User>(INITIAL_USERS[0]); // System Administrator
   const [currentUser, setCurrentUser] = useState<User>(INITIAL_USERS[0]);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  // ServiceNow-style identity context (Supabase mode only).
+  const [identity, setIdentity] = useState<EffectiveIdentity | null>(null);
+  const [identityRoles, setIdentityRoles] = useState<SysRole[]>([]);
+  const [identityGroups, setIdentityGroups] = useState<SysGroup[]>([]);
+  const identitySource: 'supabase' | 'local' = supabaseConfigured && identity ? 'supabase' : 'local';
 
   // Update Sets & Scope
   const [currentScope, setCurrentScope] = useState<string>('Global');
@@ -225,6 +314,120 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       timestamp: '15 mins ago',
     },
   ]);
+
+  // Apply a resolved EffectiveIdentity to session state + directory.
+  const applyIdentity = (
+    resolved: EffectiveIdentity,
+    roleById: Map<string, string>
+  ) => {
+    const legacy = toLegacyUser(resolved.sysUser, resolved.effectiveRoleNames);
+    setIdentity(resolved);
+    setActualUser(legacy);
+    setCurrentUser(legacy);
+    setIsAuthenticated(true);
+    void roleById; // role map is consumed by aclCan via identity.acls
+  };
+
+  const loadDirectory = async () => {
+    const sb = getSupabase();
+    if (!sb) return;
+    try {
+      const res = await listSysUsers();
+      if (res.ok) {
+        // Directory roles per user would cost N queries; the list view only
+        // needs names, so map with a lightweight default and let the admin
+        // console load effective roles per selected user.
+        setDirectoryUsers(res.data.map((u) => toLegacyUser(u, ['end_user'])));
+      }
+    } catch {
+      // directory stays on local fallback
+    }
+  };
+
+  const establishSupabaseSession = async (
+    authUserId: string
+  ): Promise<EffectiveIdentity | null> => {
+    const res = await fetchFullIdentity(authUserId);
+    if (!res.ok) {
+      setAuthError(res.error);
+      setIsAuthenticated(false);
+      setIdentity(null);
+      return null;
+    }
+    const roleById = new Map<string, string>();
+    // Build role lookup from direct + group roles present in identity.
+    for (const r of [...res.data.directRoles, ...res.data.groupRoles]) {
+      roleById.set(r.id, r.name);
+    }
+    applyIdentity(res.data, roleById);
+    void loadDirectory();
+    // Best-effort seed when an admin signs in (RLS-gated, never fatal).
+    if (
+      res.data.effectiveRoleNames.includes('admin') ||
+      res.data.effectiveRoleNames.includes('security_admin')
+    ) {
+      void ensureIdentitySeed().then((r) => {
+        if (!r.seeded) console.warn('Identity seed skipped:', r.reason);
+      });
+    }
+    return res.data;
+  };
+
+  // Restore session: Supabase Auth first, local vault fallback when offline.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let cancelled = false;
+    async function initAuth() {
+      try {
+        const sb = getSupabase();
+        if (sb) {
+          const existing = await getSupabaseSession();
+          if (!cancelled && existing) {
+            await establishSupabaseSession(existing.supabaseUser.id);
+          }
+          if (!cancelled) {
+            onSupabaseAuthStateChange((sess) => {
+              if (cancelled) return;
+              if (sess) {
+                void establishSupabaseSession(sess.supabaseUser.id);
+              } else {
+                setIsAuthenticated(false);
+                setIdentity(null);
+              }
+            });
+          }
+        } else {
+          // Offline fallback: local vault + localStorage session.
+          const storedCustom = loadCustomUsers();
+          if (!cancelled && storedCustom.length > 0) {
+            setCustomUsers(storedCustom);
+          }
+          const allUsers = [...INITIAL_USERS, ...storedCustom];
+          await seedDefaultCredentials(allUsers);
+          const sessionName = loadSessionUserName();
+          if (!cancelled && sessionName) {
+            const match = allUsers.find(
+              (u) => u.user_name.toLowerCase() === sessionName.toLowerCase()
+            );
+            if (match) {
+              setActualUser(match);
+              setCurrentUser(match);
+              setIsAuthenticated(true);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to restore auth session:', e);
+      } finally {
+        if (!cancelled) setIsAuthLoading(false);
+      }
+    }
+    initAuth();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load from LocalStorage on mount
   useEffect(() => {
@@ -382,7 +585,213 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const clearAuthError = () => setAuthError(null);
+
+  const findUserByName = (userName: string, list: User[] = users) =>
+    list.find((u) => u.user_name.toLowerCase() === userName.trim().toLowerCase());
+
+  // -- Offline (local vault) login/register ---------------------------------
+  const loginLocal = async (userName: string, password: string): Promise<boolean> => {
+    const key = userName.trim().toLowerCase();
+    const target = findUserByName(userName);
+    if (!target) {
+      setAuthError('Invalid User ID or password.');
+      return false;
+    }
+    const vault = await seedDefaultCredentials(users);
+    const cred = vault[key];
+    if (!cred) {
+      setAuthError('No password is set for this account. Ask an administrator to reset it.');
+      return false;
+    }
+    const attempt = await hashPassword(password, cred.salt);
+    if (attempt !== cred.passwordHash) {
+      setAuthError('Invalid User ID or password.');
+      return false;
+    }
+    setActualUser(target);
+    setCurrentUser(target);
+    setIsAuthenticated(true);
+    saveSession(target.user_name);
+    addActivityLog({
+      table_name: 'sys_user',
+      record_id: target.sys_id,
+      user_name: target.name,
+      user_id: target.sys_id,
+      type: 'field_change',
+      field_name: 'Session',
+      new_value: `Login successful for ${target.user_name} (local session)`,
+    });
+    return true;
+  };
+
+  const registerLocal = async (input: {
+    user_name: string;
+    name: string;
+    email: string;
+    password: string;
+  }): Promise<boolean> => {
+    if (findUserByName(input.user_name)) {
+      setAuthError('That User ID is already taken. Try signing in instead.');
+      return false;
+    }
+    const { splitName } = await import('./identity/types');
+    const { first_name, last_name } = splitName(input.name);
+    void first_name;
+    void last_name;
+    const newUser: User = {
+      sys_id: 'usr_' + Math.random().toString(36).substring(2, 9),
+      user_name: input.user_name.trim(),
+      name: input.name.trim(),
+      email: input.email.trim(),
+      roles: ['end_user'],
+      title: 'Self-registered User',
+      department: 'Self Service',
+    };
+    const salt =
+      typeof crypto !== 'undefined' && 'getRandomValues' in crypto
+        ? Array.from(crypto.getRandomValues(new Uint8Array(16)))
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('')
+        : Math.random().toString(36).substring(2);
+    const passwordHash = await hashPassword(input.password, salt);
+    const vault = loadCredentials();
+    vault[newUser.user_name.toLowerCase()] = {
+      userName: newUser.user_name.toLowerCase(),
+      sysId: newUser.sys_id,
+      salt,
+      passwordHash,
+    };
+    saveCredentials(vault);
+    const nextCustom = [...customUsers, newUser];
+    setCustomUsers(nextCustom);
+    saveCustomUsers(nextCustom);
+    setActualUser(newUser);
+    setCurrentUser(newUser);
+    setIsAuthenticated(true);
+    saveSession(newUser.user_name);
+    return true;
+  };
+
+  // -- Primary login: Supabase Auth + sys_user identity ----------------------
+  const login = async (userName: string, password: string): Promise<boolean> => {
+    setAuthError(null);
+    const key = userName.trim().toLowerCase();
+    if (!key || !password) {
+      setAuthError('Enter your User ID and password.');
+      return false;
+    }
+    if (!getSupabase()) return loginLocal(userName, password);
+
+    const result = await supabaseSignIn(userName, password);
+    if (!result.ok) {
+      setAuthError(result.error);
+      return false;
+    }
+    const established = await establishSupabaseSession(result.session.supabaseUser.id);
+    if (!established) {
+      // Identity problem (no profile / inactive / locked): end Auth session.
+      await signOutEverywhere();
+      return false;
+    }
+    addActivityLog({
+      table_name: 'sys_user',
+      record_id: established.sysUser.id,
+      user_name: sysUserDisplayName(established.sysUser),
+      user_id: established.sysUser.id,
+      type: 'field_change',
+      field_name: 'Session',
+      new_value: `Login successful for ${established.sysUser.user_name} (Supabase session)`,
+    });
+    return true;
+  };
+
+  const register = async (input: {
+    user_name: string;
+    name: string;
+    email: string;
+    password: string;
+  }): Promise<boolean> => {
+    setAuthError(null);
+    const nameErr = validateUserName(input.user_name);
+    if (nameErr) {
+      setAuthError(nameErr);
+      return false;
+    }
+    if (!input.name.trim()) {
+      setAuthError('Enter your full name.');
+      return false;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(input.email.trim())) {
+      setAuthError('Enter a valid email address.');
+      return false;
+    }
+    const pwErr = validatePasswordStrength(input.password);
+    if (pwErr) {
+      setAuthError(pwErr);
+      return false;
+    }
+    if (!getSupabase()) return registerLocal(input);
+
+    const { splitName } = await import('./identity/types');
+    const { first_name, last_name } = splitName(input.name);
+    const signUp = await signUpAuthAccount({
+      user_name: input.user_name.trim(),
+      email: input.email.trim(),
+      password: input.password,
+      first_name,
+      last_name,
+    });
+    if (!signUp.ok) {
+      setAuthError(signUp.error);
+      return false;
+    }
+    if (signUp.needsEmailConfirmation || !signUp.authUserId) {
+      setAuthError(
+        'Account created. Confirm your email, then sign in. (Disable email confirmation in Supabase Auth for instant practice logins.)'
+      );
+      return false;
+    }
+    const profile = await createOwnSysUserProfile({
+      auth_user_id: signUp.authUserId,
+      user_name: input.user_name.trim(),
+      email: input.email.trim(),
+      first_name,
+      last_name,
+    });
+    if (!profile.ok) {
+      setAuthError(profile.error);
+      return false;
+    }
+    const established = await establishSupabaseSession(signUp.authUserId);
+    return established !== null;
+  };
+
+  const logout = () => {
+    const departing = actualUser;
+    void signOutEverywhere();
+    saveSession(null);
+    // Clear any impersonation and return to the login gate.
+    setCurrentUser(departing);
+    setActualUser(departing);
+    setIdentity(null);
+    setIsAuthenticated(false);
+    setActiveViewInternal({ type: 'catalog' });
+  };
+
+  const refreshIdentity = async () => {
+    const sess = await getSupabaseSession();
+    if (!sess) return;
+    await establishSupabaseSession(sess.supabaseUser.id);
+    await loadDirectory();
+  };
+
   const impersonateUser = (user: User) => {
+    // ServiceNow behavior: only admins/security_admins may impersonate.
+    if (!userIsAdmin(actualUser)) {
+      setAuthError('Only administrators can impersonate other users.');
+      return;
+    }
     setCurrentUser(user);
     addActivityLog({
       table_name: 'sys_user',
@@ -399,6 +808,247 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const endImpersonation = () => {
     setCurrentUser(actualUser);
   };
+
+  const effectiveRoleNames = identity
+    ? identity.effectiveRoleNames
+    : currentUser.roles.map((r) => r.toLowerCase());
+  const hasRole = (role: User['roles'][number]) =>
+    effectiveRoleNames.includes(role.toLowerCase());
+  const isAdmin =
+    effectiveRoleNames.includes('admin') || effectiveRoleNames.includes('security_admin');
+
+  /**
+   * ACL-style check for any ITSM resource/operation.
+   * Supabase mode evaluates the sys_acl rows through roles/groups;
+   * offline mode uses the mirrored fallback policy. Future modules
+   * (Incident/Problem/Change/Request/Knowledge) call this directly.
+   */
+  const aclCan = (resource: AclResource, operation: AclOperation): boolean => {
+    if (identity) {
+      const roleById = new Map<string, string>();
+      for (const r of [...identity.directRoles, ...identity.groupRoles]) {
+        roleById.set(r.id, r.name);
+      }
+      const ctx = {
+        effectiveRoleNames: identity.effectiveRoleNames,
+        groupIds: identity.groups.map((g) => g.id),
+        isAdmin:
+          identity.effectiveRoleNames.includes('admin') ||
+          identity.effectiveRoleNames.includes('security_admin'),
+      };
+      const rows = identity.acls.filter(
+        (a) => a.active && a.resource === resource && a.operation === operation
+      );
+      if (ctx.isAdmin) return true;
+      if (rows.length === 0) return false;
+      return rows.some((row) => {
+        if (!row.required_role_id && !row.required_group_id) return true;
+        if (row.required_role_id) {
+          const name = roleById.get(row.required_role_id);
+          if (name && ctx.effectiveRoleNames.includes(name.toLowerCase())) return true;
+        }
+        if (row.required_group_id && ctx.groupIds.includes(row.required_group_id)) return true;
+        return false;
+      });
+    }
+    return canOffline(
+      currentUser.roles.map((r) => r.toLowerCase()),
+      resource,
+      operation
+    );
+  };
+
+  // View gate maps legacy views onto (resource, read) ACL checks.
+  const canAccess = (viewType: string, table?: string): boolean => {
+    if (identity) {
+      const adminViews = new Set([
+        'script_background',
+        'client_scripts',
+        'business_rules',
+        'flow_designer',
+        'tables_dictionary',
+        'update_sets',
+        'user_administration',
+      ]);
+      if (adminViews.has(viewType)) return isAdmin;
+      if (viewType === 'catalog' || viewType === 'catalog_item') {
+        return aclCan('catalog', 'read');
+      }
+      if (viewType === 'list' || viewType === 'form') {
+        const tableToResource: Record<string, AclResource> = {
+          incident: 'incident',
+          problem: 'problem',
+          change_request: 'change_request',
+          sc_req_item: 'sc_req_item',
+          kb_knowledge: 'kb_knowledge',
+          sys_user: 'sys_user',
+        };
+        const resource = table ? tableToResource[table] : undefined;
+        if (resource) return aclCan(resource, 'read');
+        // Tables without an ACL resource yet (cmdb_ci, custom): staff only.
+        if (table === 'cmdb_ci' || (table && table.startsWith('u_'))) {
+          return (
+            isAdmin ||
+            effectiveRoleNames.includes('itil')
+          );
+        }
+        return true;
+      }
+      return true;
+    }
+    return userCanAccessView(currentUser, viewType, table);
+  };
+
+  // -- Admin: user/role/group management (Supabase-backed) --------------------
+  const requireAdmin = (): boolean => {
+    if (!isAdmin) {
+      setAuthError('Only administrators can manage users, roles and groups.');
+      return false;
+    }
+    if (!getSupabase()) {
+      setAuthError('User administration requires Supabase. Connect your project first.');
+      return false;
+    }
+    return true;
+  };
+
+  const adminCreateUser: PlatformContextType['adminCreateUser'] = async (input) => {
+    setAuthError(null);
+    if (!requireAdmin()) return false;
+    const nameErr = validateUserName(input.user_name);
+    if (nameErr) {
+      setAuthError(nameErr);
+      return false;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(input.email.trim())) {
+      setAuthError('Enter a valid email address.');
+      return false;
+    }
+    const pwErr = validatePasswordStrength(input.password);
+    if (pwErr) {
+      setAuthError(pwErr);
+      return false;
+    }
+    // 1. Create the Auth account (credentials holder).
+    const { signUpAuthAccount: signUp } = await import('./identity/authentication');
+    const signUpRes = await signUp({
+      user_name: input.user_name.trim(),
+      email: input.email.trim(),
+      password: input.password,
+      first_name: input.first_name.trim(),
+      last_name: input.last_name.trim(),
+    });
+    if (!signUpRes.ok) {
+      setAuthError(signUpRes.error);
+      return false;
+    }
+    // 2. Create the sys_user profile (+ roles/groups).
+    const created = await svcCreateSysUser({
+      user_name: input.user_name.trim(),
+      email: input.email.trim(),
+      first_name: input.first_name.trim(),
+      last_name: input.last_name.trim(),
+      department: input.department,
+      title: input.title,
+      auth_user_id: signUpRes.authUserId,
+      roleNames: input.roleNames,
+      groupIds: input.groupIds,
+    });
+    if (!created.ok) {
+      setAuthError(created.error);
+      return false;
+    }
+    await loadDirectory();
+    return true;
+  };
+
+  const adminSetUserActive = async (userId: string, active: boolean): Promise<boolean> => {
+    setAuthError(null);
+    if (!requireAdmin()) return false;
+    const res = await svcSetUserActive(userId, active);
+    if (!res.ok) {
+      setAuthError(res.error);
+      return false;
+    }
+    await loadDirectory();
+    await refreshIdentity();
+    return true;
+  };
+
+  const adminSetUserLocked = async (userId: string, locked: boolean): Promise<boolean> => {
+    setAuthError(null);
+    if (!requireAdmin()) return false;
+    const res = await svcSetUserLocked(userId, locked);
+    if (!res.ok) {
+      setAuthError(res.error);
+      return false;
+    }
+    await loadDirectory();
+    return true;
+  };
+
+  const adminGrantRole = async (userId: string, roleId: string): Promise<boolean> => {
+    setAuthError(null);
+    if (!requireAdmin()) return false;
+    const res = await svcGrantRole(userId, roleId);
+    if (!res.ok) {
+      setAuthError(res.error);
+      return false;
+    }
+    await refreshIdentity();
+    return true;
+  };
+
+  const adminRevokeRole = async (userId: string, roleId: string): Promise<boolean> => {
+    setAuthError(null);
+    if (!requireAdmin()) return false;
+    const res = await svcRevokeRole(userId, roleId);
+    if (!res.ok) {
+      setAuthError(res.error);
+      return false;
+    }
+    await refreshIdentity();
+    return true;
+  };
+
+  const adminAddGroupMember = async (groupId: string, userId: string): Promise<boolean> => {
+    setAuthError(null);
+    if (!requireAdmin()) return false;
+    const res = await svcAddGroupMember(groupId, userId);
+    if (!res.ok) {
+      setAuthError(res.error);
+      return false;
+    }
+    await refreshIdentity();
+    return true;
+  };
+
+  const adminRemoveGroupMember = async (groupId: string, userId: string): Promise<boolean> => {
+    setAuthError(null);
+    if (!requireAdmin()) return false;
+    const res = await svcRemoveGroupMember(groupId, userId);
+    if (!res.ok) {
+      setAuthError(res.error);
+      return false;
+    }
+    await refreshIdentity();
+    return true;
+  };
+
+  // Load identity directories (roles/groups) once authenticated via Supabase.
+  useEffect(() => {
+    if (!getSupabase() || !isAuthenticated || !identity) return;
+    const sb = getSupabase();
+    if (!sb) return;
+    void (async () => {
+      const [rolesRes, groupsRes] = await Promise.all([
+        sb.from('sys_role').select('*').order('name'),
+        sb.from('sys_group').select('*').order('name'),
+      ]);
+      if (rolesRes.data) setIdentityRoles(rolesRes.data as SysRole[]);
+      if (groupsRes.data) setIdentityGroups(groupsRes.data as SysGroup[]);
+    })();
+  }, [isAuthenticated, identity]);
 
   // Record an action in the active Update Set
   const recordUpdateSetChange = (
@@ -799,7 +1449,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     setIncidents(INITIAL_INCIDENTS);
     setProblems(INITIAL_PROBLEMS);
     setChanges(INITIAL_CHANGES);
-    setUsers(INITIAL_USERS);
+    // Preserve accounts + session: only clear platform demo data keys.
     setGroups(INITIAL_GROUPS);
     setCis(INITIAL_CIS);
     setTables(INITIAL_TABLES);
@@ -808,7 +1458,18 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     setFlows(INITIAL_FLOWS);
     setServiceRequests(INITIAL_REQUESTS);
     setActivityLogs(INITIAL_ACTIVITY_LOGS);
-    localStorage.clear();
+    if (typeof window !== 'undefined') {
+      [
+        'sn_data_incidents',
+        'sn_data_tables',
+        'sn_data_client_scripts',
+        'sn_data_business_rules',
+        'sn_data_flows',
+        'sn_data_requests',
+        'sn_data_activity',
+        'sn_list_columns',
+      ].forEach((k) => localStorage.removeItem(k));
+    }
   };
 
   return (
@@ -821,8 +1482,31 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         currentUser,
         actualUser,
         users,
+        isAuthenticated,
+        isAuthLoading,
+        authError,
+        clearAuthError,
+        login,
+        register,
+        logout,
         impersonateUser,
         endImpersonation,
+        hasRole,
+        isAdmin,
+        canAccess,
+        identity,
+        identitySource,
+        aclCan,
+        refreshIdentity,
+        adminCreateUser,
+        adminSetUserActive,
+        adminSetUserLocked,
+        adminGrantRole,
+        adminRevokeRole,
+        adminAddGroupMember,
+        adminRemoveGroupMember,
+        identityRoles,
+        identityGroups,
         currentScope,
         setCurrentScope,
         currentUpdateSet,

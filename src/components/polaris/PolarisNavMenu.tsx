@@ -61,6 +61,7 @@ export default function PolarisNavMenu({
     isFavorite,
     history,
     tables,
+    canAccess,
   } = usePlatform();
 
   const [filterText, setFilterText] = useState('');
@@ -186,6 +187,11 @@ export default function PolarisNavMenu({
       icon: Users,
       modules: [
         {
+          title: 'Identity Console (users, roles, groups, ACLs)',
+          view: { type: 'user_administration' },
+          filterKeywords: 'users roles groups acl identity administration sys_user security active lock',
+        },
+        {
           title: 'Users (sys_user)',
           view: { type: 'list', table: 'sys_user' },
           filterKeywords: 'users user profiles sys_user employees',
@@ -251,7 +257,19 @@ export default function PolarisNavMenu({
       : []),
   ];
 
+  const isViewAllowed = (view: ActiveViewType): boolean => {
+    if (view.type === 'list') return canAccess('list', view.table);
+    if (view.type === 'form') return canAccess('form', view.table);
+    return canAccess(view.type);
+  };
+
   const handleSelectModule = (view: ActiveViewType) => {
+    // Role gate at navigation time; PlatformApp also guards direct view state.
+    if (!isViewAllowed(view)) {
+      setActiveView(view);
+      if (!isPinned) onClose();
+      return;
+    }
     if (view.type === 'form') {
       openRecord(view.table, view.sys_id);
     } else if (view.type === 'list') {
@@ -316,13 +334,14 @@ export default function PolarisNavMenu({
 
               const matchingModules = app.modules.filter(
                 (m) =>
-                  !query ||
-                  m.title.toLowerCase().includes(query) ||
-                  app.name.toLowerCase().includes(query) ||
-                  (m.filterKeywords && m.filterKeywords.toLowerCase().includes(query))
+                  isViewAllowed(m.view) &&
+                  (!query ||
+                    m.title.toLowerCase().includes(query) ||
+                    app.name.toLowerCase().includes(query) ||
+                    (m.filterKeywords && m.filterKeywords.toLowerCase().includes(query)))
               );
 
-              if (query && matchingModules.length === 0) {
+              if (matchingModules.length === 0) {
                 return null;
               }
 
@@ -399,6 +418,7 @@ export default function PolarisNavMenu({
               </div>
             ) : (
               favorites
+                .filter((f) => isViewAllowed(f.view))
                 .filter((f) => !filterText || f.title.toLowerCase().includes(filterText.toLowerCase()))
                 .map((fav) => (
                   <div
@@ -441,6 +461,7 @@ export default function PolarisNavMenu({
               Recently Visited
             </div>
             {history
+              .filter((h) => isViewAllowed(h.view))
               .filter((h) => !filterText || h.title.toLowerCase().includes(filterText.toLowerCase()))
               .map((h) => (
                 <div

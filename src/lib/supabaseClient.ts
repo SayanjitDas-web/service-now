@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Environment variables or localStorage config
+// Server-managed configuration via environment variables only.
+// In-app credential editing was removed; configure Supabase in `.env.local`.
 export interface SupabaseConfig {
   url: string;
   anonKey: string;
@@ -8,18 +9,10 @@ export interface SupabaseConfig {
 }
 
 export function getSupabaseConfig(): SupabaseConfig {
-  if (typeof window !== 'undefined') {
-    const storedUrl = localStorage.getItem('sn_supabase_url');
-    const storedKey = localStorage.getItem('sn_supabase_anon_key');
-    if (storedUrl && storedKey) {
-      return { url: storedUrl, anonKey: storedKey, isConfigured: true };
-    }
-  }
-
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  if (envUrl && envKey && !envUrl.includes('placeholder')) {
+  if (envUrl && envKey && !envUrl.includes('placeholder') && !envUrl.includes('your-project')) {
     return { url: envUrl, anonKey: envKey, isConfigured: true };
   }
 

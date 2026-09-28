@@ -10,8 +10,36 @@ interface ImpersonateModalProps {
 }
 
 export default function ImpersonateModal({ onClose }: ImpersonateModalProps) {
-  const { users, currentUser, impersonateUser, actualUser } = usePlatform();
+  const { users, currentUser, impersonateUser, actualUser, isAdmin, authError } = usePlatform();
   const [searchTerm, setSearchTerm] = useState('');
+
+  if (!isAdmin) {
+    return (
+      <div className="sn-modal-backdrop" onClick={onClose}>
+        <div className="sn-modal" style={{ width: '440px' }} onClick={(e) => e.stopPropagation()}>
+          <div className="sn-modal-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Lock size={18} color="#dc2626" />
+              <span>Impersonation Restricted</span>
+            </div>
+            <button onClick={onClose} style={{ color: '#94a3b8' }}>
+              <X size={18} />
+            </button>
+          </div>
+          <div className="sn-modal-body">
+            <p style={{ fontSize: '12.5px', color: '#64748b' }}>
+              {authError || 'Only users with the admin or security_admin role can impersonate other users.'}
+            </p>
+          </div>
+          <div className="sn-modal-footer">
+            <button className="sn-btn sn-btn-default" onClick={onClose}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const filteredUsers = users.filter(
     (u) =>
