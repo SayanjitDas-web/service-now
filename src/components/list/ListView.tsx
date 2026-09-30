@@ -42,6 +42,8 @@ export default function ListView({ tableName }: ListViewProps) {
     setListColumnsForTable,
     deleteIncident,
     deleteRecord,
+    clearTableData,
+    loadDemoData,
   } = usePlatform();
 
   // State
@@ -50,7 +52,7 @@ export default function ListView({ tableName }: ListViewProps) {
   const [showSlushbucket, setShowSlushbucket] = useState(false);
   const [quickSearchText, setQuickSearchText] = useState('');
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
-  const [sortColumn, setSortColumn] = useState<string>('number');
+  const [sortColumn, setSortColumn] = useState<string>('sys_created_on');
   const [sortAsc, setSortAsc] = useState<boolean>(false);
   const [selectedRowIds, setSelectedRowIds] = useState<string[]>([]);
   const [pageSize, setPageSize] = useState<number>(20);
@@ -173,12 +175,22 @@ export default function ListView({ tableName }: ListViewProps) {
     copy.sort((a, b) => {
       const valA = a[sortColumn] ?? '';
       const valB = b[sortColumn] ?? '';
+      if (typeof valA === 'string' && typeof valB === 'string') {
+        const comp = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+        return sortAsc ? comp : -comp;
+      }
       if (valA < valB) return sortAsc ? -1 : 1;
       if (valA > valB) return sortAsc ? 1 : -1;
       return 0;
     });
     return copy;
   }, [filteredRecords, sortColumn, sortAsc]);
+
+  // Keep pagination within bounds and reset to page 1 on new records or table changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+    setSelectedRowIds([]);
+  }, [rawRecords.length, tableName]);
 
   // Pagination slice
   const totalCount = sortedRecords.length;
@@ -347,6 +359,24 @@ export default function ListView({ tableName }: ListViewProps) {
             <span>New</span>
           </button>
 
+          {/* Clear Table Records Button */}
+          {rawRecords.length > 0 && (
+            <button
+              className="sn-btn sn-btn-default"
+              onClick={() => {
+                if (confirm(`Clear all ${rawRecords.length} record(s) from ${tableLabel}? This removes demo and existing records.`)) {
+                  clearTableData(tableName);
+                  setSelectedRowIds([]);
+                }
+              }}
+              title={`Clear all ${tableLabel} records`}
+              style={{ color: '#dc2626', borderColor: '#fca5a5' }}
+            >
+              <Trash2 size={13} />
+              <span>Clear Data</span>
+            </button>
+          )}
+
           {/* Personalize List Columns (Gear / Slushbucket) */}
           <button
             className="sn-btn sn-btn-default"
@@ -456,8 +486,31 @@ export default function ListView({ tableName }: ListViewProps) {
           <tbody>
             {pagedRecords.length === 0 ? (
               <tr>
-                <td colSpan={activeCols.length + 1} style={{ textAlign: 'center', padding: '36px', color: '#94a3b8' }}>
-                  No records match the current filter criteria.
+                <td colSpan={activeCols.length + 1} style={{ textAlign: 'center', padding: '48px 16px', color: 'var(--now-text-secondary)' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--now-text-main)' }}>
+                      No {tableLabel} records found
+                    </div>
+                    <div style={{ fontSize: '12.5px', color: 'var(--now-text-muted)', maxWidth: '420px', lineHeight: 1.5 }}>
+                      Seed data has been cleared. Click <strong>&quot;New&quot;</strong> to raise a {tableLabel.toLowerCase()} with your custom number, or load sample records to test workflows.
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                      <button
+                        className="sn-btn sn-btn-primary"
+                        onClick={() => openRecord(tableName, 'new')}
+                      >
+                        <Plus size={14} />
+                        <span>New {tableLabel}</span>
+                      </button>
+                      <button
+                        className="sn-btn sn-btn-default"
+                        onClick={() => loadDemoData(tableName)}
+                        title="Restore sample demo records for testing"
+                      >
+                        <span>Load Sample Records</span>
+                      </button>
+                    </div>
+                  </div>
                 </td>
               </tr>
             ) : (

@@ -25,6 +25,7 @@ import {
   INITIAL_GROUPS,
   INITIAL_CIS,
   INITIAL_INCIDENTS,
+  DEMO_INCIDENTS,
   INITIAL_PROBLEMS,
   INITIAL_CHANGES,
   INITIAL_CATALOG_ITEMS,
@@ -215,6 +216,9 @@ interface PlatformContextType {
 
   // Helpers
   resetToDefaultData: () => void;
+  clearSeedData: () => void;
+  clearTableData: (table: string) => void;
+  loadDemoData: (table?: string) => void;
   setAllIncidents: (data: Incident[]) => void;
 }
 
@@ -467,8 +471,32 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     if (typeof window === 'undefined') return;
     const timer = setTimeout(() => {
       try {
-        const savedIncidents = localStorage.getItem('sn_data_incidents');
-        if (savedIncidents) setIncidents(JSON.parse(savedIncidents));
+        const seedCleared = localStorage.getItem('sn_seed_data_cleared');
+        if (!seedCleared) {
+          // Clear default seed data on first run as requested by user
+          localStorage.setItem('sn_seed_data_cleared', 'true');
+          localStorage.removeItem('sn_data_incidents');
+          setIncidents([]);
+        } else {
+          const savedIncidents = localStorage.getItem('sn_data_incidents');
+          if (savedIncidents) {
+            try {
+              const parsed = JSON.parse(savedIncidents);
+              // Clean out old hardcoded demo records if user hadn't explicitly loaded demo data
+              const isOldDemoOnly = Array.isArray(parsed) && parsed.length > 0 && parsed.every((r: any) => r.sys_id && r.sys_id.startsWith('inc_100'));
+              if (isOldDemoOnly && localStorage.getItem('sn_demo_explicitly_loaded') !== 'true') {
+                localStorage.removeItem('sn_data_incidents');
+                setIncidents([]);
+              } else {
+                setIncidents(parsed);
+              }
+            } catch {
+              setIncidents([]);
+            }
+          } else {
+            setIncidents([]);
+          }
+        }
 
         const savedTheme = localStorage.getItem('sn_ui_theme');
         if (savedTheme) setTheme(savedTheme as any);
@@ -1247,10 +1275,15 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     let saved: Incident;
 
     if (isNew) {
-      const nextNum = 10000 + incidents.length + 1;
+      const generatedSysId = generateSysId('inc');
+      // If user provided custom number, use that number! Do NOT auto fix / overwrite it
+      const userNum = incidentData.number?.trim();
+      const autoNum = `INC00${10000 + incidents.length + 1}`;
+      const finalNumber = userNum && userNum !== 'INC(Auto)' && userNum !== '(Auto-generated)'
+        ? userNum
+        : autoNum;
+
       const newInc: Incident = {
-        sys_id: generateSysId('inc'),
-        number: `INC00${nextNum}`,
         short_description: incidentData.short_description || 'New Incident',
         description: incidentData.description || '',
         state: incidentData.state || '1',
@@ -1269,10 +1302,12 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         sys_updated_on: now,
         sys_created_by: currentUser.user_name,
         ...incidentData,
+        sys_id: generatedSysId,
+        number: finalNumber,
       };
 
       saved = runIncidentBusinessRules(newInc);
-      setIncidents((prev) => [saved, ...prev]);
+      setIncidents((prev) => [saved, ...prev.filter((i) => i.sys_id !== saved.sys_id)]);
 
       addActivityLog({
         table_name: 'incident',
@@ -1291,9 +1326,16 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       }
     } else {
       const existing = incidents.find((i) => i.sys_id === incidentData.sys_id);
+      const userNum = incidentData.number?.trim();
+      const finalNumber = userNum && userNum !== 'INC(Auto)' && userNum !== '(Auto-generated)'
+        ? userNum
+        : (existing?.number || `INC00${10000 + incidents.length}`);
+
       const updated = {
         ...existing,
         ...incidentData,
+        sys_id: incidentData.sys_id,
+        number: finalNumber,
         sys_updated_on: now,
       } as Incident;
 
@@ -1373,10 +1415,14 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
     let saved: Problem;
     if (isNew) {
-      const nextNum = 100 + problems.length + 1;
+      const generatedSysId = generateSysId('prb');
+      const userNum = probData.number?.trim();
+      const autoNum = `PRB000${100 + problems.length + 1}`;
+      const finalNumber = userNum && userNum !== 'PRB(Auto)' && userNum !== '(Auto-generated)'
+        ? userNum
+        : autoNum;
+
       saved = {
-        sys_id: generateSysId('prb'),
-        number: `PRB000${nextNum}`,
         short_description: probData.short_description || 'New Problem',
         description: probData.description || '',
         state: probData.state || '1',
@@ -1390,11 +1436,15 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         sys_created_on: now,
         sys_updated_on: now,
         ...probData,
+        sys_id: generatedSysId,
+        number: finalNumber,
       };
-      setProblems((prev) => [saved, ...prev]);
+      setProblems((prev) => [saved, ...prev.filter((p) => p.sys_id !== saved.sys_id)]);
     } else {
       const existing = problems.find((p) => p.sys_id === probData.sys_id);
-      saved = { ...existing, ...probData, sys_updated_on: now } as Problem;
+      const userNum = probData.number?.trim();
+      const finalNumber = userNum || existing?.number || probData.number;
+      saved = { ...existing, ...probData, sys_id: probData.sys_id, number: finalNumber, sys_updated_on: now } as Problem;
       setProblems((prev) => prev.map((p) => (p.sys_id === saved.sys_id ? saved : p)));
     }
     return saved;
@@ -1406,10 +1456,14 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
     let saved: ChangeRequest;
     if (isNew) {
-      const nextNum = 30000 + changes.length + 1;
+      const generatedSysId = generateSysId('chg');
+      const userNum = chgData.number?.trim();
+      const autoNum = `CHG00${30000 + changes.length + 1}`;
+      const finalNumber = userNum && userNum !== 'CHG(Auto)' && userNum !== '(Auto-generated)'
+        ? userNum
+        : autoNum;
+
       saved = {
-        sys_id: generateSysId('chg'),
-        number: `CHG00${nextNum}`,
         short_description: chgData.short_description || 'New Change Request',
         description: chgData.description || '',
         type: chgData.type || 'Normal',
@@ -1426,11 +1480,15 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         sys_created_on: now,
         sys_updated_on: now,
         ...chgData,
+        sys_id: generatedSysId,
+        number: finalNumber,
       };
-      setChanges((prev) => [saved, ...prev]);
+      setChanges((prev) => [saved, ...prev.filter((c) => c.sys_id !== saved.sys_id)]);
     } else {
       const existing = changes.find((c) => c.sys_id === chgData.sys_id);
-      saved = { ...existing, ...chgData, sys_updated_on: now } as ChangeRequest;
+      const userNum = chgData.number?.trim();
+      const finalNumber = userNum || existing?.number || chgData.number;
+      saved = { ...existing, ...chgData, sys_id: chgData.sys_id, number: finalNumber, sys_updated_on: now } as ChangeRequest;
       setChanges((prev) => prev.map((c) => (c.sys_id === saved.sys_id ? saved : c)));
     }
     return saved;
@@ -1574,6 +1632,50 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     }));
   };
 
+  const clearSeedData = () => {
+    setIncidents([]);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sn_seed_data_cleared', 'true');
+      localStorage.removeItem('sn_data_incidents');
+      localStorage.removeItem('sn_demo_explicitly_loaded');
+    }
+  };
+
+  const clearTableData = (table: string) => {
+    switch (table) {
+      case 'incident':
+        setIncidents([]);
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('sn_data_incidents');
+          localStorage.removeItem('sn_demo_explicitly_loaded');
+        }
+        break;
+      case 'problem':
+        setProblems([]);
+        break;
+      case 'change_request':
+        setChanges([]);
+        break;
+      case 'sc_req_item':
+        setServiceRequests([]);
+        if (typeof window !== 'undefined') localStorage.removeItem('sn_data_requests');
+        break;
+      default:
+        setCustomRecords((prev) => ({ ...prev, [table]: [] }));
+        break;
+    }
+  };
+
+  const loadDemoData = (table: string = 'incident') => {
+    if (table === 'incident' || !table) {
+      setIncidents(DEMO_INCIDENTS);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sn_data_incidents', JSON.stringify(DEMO_INCIDENTS));
+        localStorage.setItem('sn_demo_explicitly_loaded', 'true');
+      }
+    }
+  };
+
   const resetToDefaultData = () => {
     setIncidents(INITIAL_INCIDENTS);
     setProblems(INITIAL_PROBLEMS);
@@ -1597,6 +1699,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         'sn_data_requests',
         'sn_data_activity',
         'sn_list_columns',
+        'sn_demo_explicitly_loaded',
       ].forEach((k) => localStorage.removeItem(k));
     }
   };
@@ -1683,6 +1786,9 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         listColumns,
         setListColumnsForTable,
         resetToDefaultData,
+        clearSeedData,
+        clearTableData,
+        loadDemoData,
         setAllIncidents: setIncidents,
       }}
     >

@@ -177,7 +177,7 @@ export const INITIAL_CIS: ConfigurationItem[] = [
   },
 ];
 
-export const INITIAL_INCIDENTS: Incident[] = [
+export const DEMO_INCIDENTS: Incident[] = [
   {
     sys_id: 'inc_1001',
     number: 'INC0010001',
@@ -346,6 +346,8 @@ export const INITIAL_INCIDENTS: Incident[] = [
     sys_created_by: 'admin',
   },
 ];
+
+export const INITIAL_INCIDENTS: Incident[] = [];
 
 export const INITIAL_PROBLEMS: Problem[] = [
   {

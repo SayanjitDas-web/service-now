@@ -199,10 +199,35 @@ export function executeBackgroundScript(
       return this.matchedRows.length;
     }
 
+    initialize() {
+      const reserved = new Set(['tableName', 'conditions', 'matchedRows', 'currentIndex', 'rowLimit', 'sortField', 'sortDesc']);
+      for (const key of Object.keys(this)) {
+        if (!reserved.has(key) && typeof this[key] !== 'function') {
+          delete this[key];
+        }
+      }
+      this.currentIndex = -1;
+    }
+
+    newRecord() {
+      this.initialize();
+      if (this.tableName === 'incident') {
+        const count = incidentCopies.length + 1;
+        this.number = `INC00${10000 + count}`;
+        this.state = '1';
+        this.priority = '4';
+      }
+    }
+
     update(): string {
       if (this.currentIndex >= 0 && this.matchedRows[this.currentIndex]) {
         const target = this.matchedRows[this.currentIndex];
-        Object.assign(target, this);
+        const reserved = new Set(['tableName', 'conditions', 'matchedRows', 'currentIndex', 'rowLimit', 'sortField', 'sortDesc']);
+        for (const key of Object.keys(this)) {
+          if (!reserved.has(key) && typeof this[key] !== 'function') {
+            target[key] = this[key];
+          }
+        }
         target.sys_updated_on = gs.nowDateTime();
         recordsAffected++;
         return target.sys_id;
@@ -211,21 +236,26 @@ export function executeBackgroundScript(
     }
 
     insert(): string {
-      const newSysId = 'rec_' + Math.random().toString(36).substring(2, 10);
+      const prefix = this.tableName === 'incident' ? 'inc' : this.tableName === 'problem' ? 'prb' : 'rec';
+      const newSysId = `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 7)}`;
       const newRec: any = {
         sys_id: newSysId,
         sys_created_on: gs.nowDateTime(),
         sys_updated_on: gs.nowDateTime(),
         sys_created_by: gs.getUserName(),
       };
+      const reserved = new Set(['tableName', 'conditions', 'matchedRows', 'currentIndex', 'rowLimit', 'sortField', 'sortDesc']);
       for (const key of Object.keys(this)) {
-        if (!['tableName', 'conditions', 'matchedRows', 'currentIndex', 'rowLimit', 'sortField', 'sortDesc'].includes(key)) {
+        if (!reserved.has(key) && typeof this[key] !== 'function') {
           newRec[key] = this[key];
         }
       }
       if (this.tableName === 'incident') {
         const count = incidentCopies.length + 1;
         newRec.number = newRec.number || `INC00${10000 + count}`;
+        newRec.short_description = newRec.short_description || 'New Incident';
+        newRec.state = newRec.state || '1';
+        newRec.priority = newRec.priority || '4';
         incidentCopies.unshift(newRec as Incident);
       }
       recordsAffected++;

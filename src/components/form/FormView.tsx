@@ -62,9 +62,10 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
   const originalRecord = useMemo(() => {
     if (isNew) {
       if (tableName === 'incident') {
+        const nextNum = 10000 + incidents.length + 1;
         return {
           sys_id: 'new',
-          number: 'INC(Auto)',
+          number: `INC00${nextNum}`,
           short_description: '',
           description: '',
           state: '1',
@@ -81,6 +82,32 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
           close_notes: '',
         };
       }
+      if (tableName === 'problem') {
+        const nextNum = 100 + problems.length + 1;
+        return {
+          sys_id: 'new',
+          number: `PRB000${nextNum}`,
+          short_description: '',
+          description: '',
+          state: '1',
+          priority: '3',
+          impact: '3',
+          urgency: '3',
+        };
+      }
+      if (tableName === 'change_request') {
+        const nextNum = 30000 + changes.length + 1;
+        return {
+          sys_id: 'new',
+          number: `CHG00${nextNum}`,
+          short_description: '',
+          description: '',
+          type: 'Normal',
+          state: 'Draft',
+          risk: 'Moderate',
+          priority: '3',
+        };
+      }
       return { sys_id: 'new' };
     }
 
@@ -92,6 +119,10 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
   }, [tableName, sysId, isNew, incidents, problems, changes, customRecords, currentUser]);
 
   const [formData, setFormData] = useState<Record<string, any>>(originalRecord || {});
+
+  useEffect(() => {
+    setFormData(originalRecord || {});
+  }, [originalRecord]);
   const [formSectionTab, setFormSectionTab] = useState<'notes' | 'related' | 'resolution'>('notes');
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [showLookupModal, setShowLookupModal] = useState<{ field: string; refTable: string } | null>(null);
@@ -211,6 +242,8 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
 
     if (andClose) {
       openList(tableName);
+    } else if (isNew && savedRec?.sys_id) {
+      openRecord(tableName, savedRec.sys_id);
     }
   };
 
@@ -572,13 +605,44 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
             {/* Number */}
             <div className="sn-form-group">
-              <label className="sn-field-label">Number</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
+                <label className="sn-field-label">Number</label>
+                {isNew && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const prefix = tableName === 'incident' ? 'INC00' : tableName === 'problem' ? 'PRB000' : 'CHG00';
+                      const count = tableName === 'incident'
+                        ? 10000 + incidents.length + 1
+                        : tableName === 'problem'
+                        ? 100 + problems.length + 1
+                        : 30000 + changes.length + 1;
+                      handleFieldChange('number', `${prefix}${count}`);
+                    }}
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--now-primary, #00a389)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                    title="Auto-assign next sequential number"
+                  >
+                    Auto-assign
+                  </button>
+                )}
+              </div>
               <input
                 type="text"
-                className="sn-field-input read-only"
-                value={formData.number || '(Auto-generated)'}
-                readOnly
+                className="sn-field-input"
+                placeholder={isNew ? 'Enter ticket number (e.g. INC0010001, MY-TICKET-01)...' : 'Number'}
+                value={formData.number || ''}
+                onChange={(e) => handleFieldChange('number', e.target.value)}
               />
+              <span style={{ fontSize: '10.5px', color: 'var(--now-text-muted)', marginTop: '2px' }}>
+                Custom ticket numbers are allowed. You can edit this freely.
+              </span>
             </div>
 
             {/* Caller */}

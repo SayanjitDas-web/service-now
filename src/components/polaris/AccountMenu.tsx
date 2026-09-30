@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOut, Palette, UserRound, RotateCcw, ShieldCheck, ChevronDown } from 'lucide-react';
+import { LogOut, Palette, UserRound, RotateCcw, ShieldCheck, ChevronDown, Trash2 } from 'lucide-react';
 import { usePlatform } from '@/lib/store';
 
 export default function AccountMenu() {
@@ -16,6 +16,8 @@ export default function AccountMenu() {
     compactDensity,
     setCompactDensity,
     resetToDefaultData,
+    clearSeedData,
+    loadDemoData,
     authError,
     clearAuthError,
   } = usePlatform();
@@ -237,31 +239,55 @@ export default function AccountMenu() {
             </div>
 
             {isAdmin && (
-              <button
-                onClick={() => {
-                  if (!confirmReset) {
-                    setConfirmReset(true);
-                    return;
-                  }
-                  resetToDefaultData();
-                  setConfirmReset(false);
-                  setOpen(false);
-                }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  width: '100%',
-                  padding: '8px 10px',
-                  fontSize: '12.5px',
-                  borderRadius: '5px',
-                  color: '#b91c1c',
-                }}
-                title="Restore demo incidents, problems, changes and customizations"
-              >
-                <RotateCcw size={14} />
-                <span>{confirmReset ? 'Click again to confirm reset' : 'Reset demo data'}</span>
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    clearSeedData();
+                    setOpen(false);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: '12.5px',
+                    borderRadius: '5px',
+                    color: '#b91c1c',
+                  }}
+                  title="Clear all seed incidents and tickets"
+                >
+                  <Trash2 size={14} />
+                  <span>Clear seed data (Incidents)</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (!confirmReset) {
+                      setConfirmReset(true);
+                      return;
+                    }
+                    resetToDefaultData();
+                    loadDemoData('incident');
+                    setConfirmReset(false);
+                    setOpen(false);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: '12.5px',
+                    borderRadius: '5px',
+                    color: '#475569',
+                  }}
+                  title="Restore demo incidents, problems, changes and customizations"
+                >
+                  <RotateCcw size={14} />
+                  <span>{confirmReset ? 'Click again to confirm reset' : 'Restore demo data'}</span>
+                </button>
+              </>
             )}
 
             <button
