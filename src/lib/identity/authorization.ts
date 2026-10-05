@@ -153,6 +153,8 @@ export const FALLBACK_ACLS: FallbackAclRow[] = [
   ),
   { resource: 'sc_req_item', operation: 'read', role: 'end_user' },
   { resource: 'sc_req_item', operation: 'create', role: 'end_user' },
+  { resource: 'problem', operation: 'read', role: 'end_user' },
+  { resource: 'change_request', operation: 'read', role: 'end_user' },
   { resource: 'sys_user', operation: 'read', role: 'itil' },
   { resource: 'sys_user', operation: 'read', role: 'admin' },
   { resource: 'sys_user', operation: 'read', role: 'end_user' },

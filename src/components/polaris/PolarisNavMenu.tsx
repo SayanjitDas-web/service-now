@@ -22,6 +22,7 @@ import {
   Layers,
   Sparkles,
   Laptop,
+  Inbox,
 } from 'lucide-react';
 import { usePlatform, ActiveViewType } from '@/lib/store';
 
@@ -87,6 +88,27 @@ export default function PolarisNavMenu({
 
   const applications: NavApplication[] = [
     {
+      name: 'Service Desk',
+      icon: Inbox,
+      modules: [
+        {
+          title: 'My Work (Assigned to Me)',
+          view: { type: 'list', table: 'task', filterPreset: 'assigned_to_me' },
+          filterKeywords: 'task tasks assigned to me my work mine fulfillment queue',
+        },
+        {
+          title: 'My Groups Work',
+          view: { type: 'list', table: 'task', filterPreset: 'my_groups_work' },
+          filterKeywords: 'group work queue unassigned department team',
+        },
+        {
+          title: 'All Tasks',
+          view: { type: 'list', table: 'task', filterPreset: 'all' },
+          filterKeywords: 'all tasks combined polymorphic queue incidents problems changes requests',
+        },
+      ],
+    },
+    {
       name: 'Incident',
       icon: AlertCircle,
       modules: [
@@ -96,18 +118,28 @@ export default function PolarisNavMenu({
           filterKeywords: 'incident create new ticket new',
         },
         {
-          title: 'Open',
-          view: { type: 'list', table: 'incident' },
+          title: 'Assigned to Me',
+          view: { type: 'list', table: 'incident', filterPreset: 'assigned_to_me' },
+          filterKeywords: 'incident assigned to me my work tickets mine',
+        },
+        {
+          title: 'My Incidents (Caller)',
+          view: { type: 'list', table: 'incident', filterPreset: 'my_incidents' },
+          filterKeywords: 'incident my incidents caller reported by me',
+        },
+        {
+          title: 'Open Incidents',
+          view: { type: 'list', table: 'incident', filterPreset: 'open' },
           filterKeywords: 'incident open tickets list',
         },
         {
           title: 'Critical (P1) Incidents',
-          view: { type: 'list', table: 'incident' },
+          view: { type: 'list', table: 'incident', filterPreset: 'p1' },
           filterKeywords: 'incident critical p1 high severity',
         },
         {
           title: 'All Incidents',
-          view: { type: 'list', table: 'incident' },
+          view: { type: 'list', table: 'incident', filterPreset: 'all' },
           filterKeywords: 'incident all list',
         },
       ],
@@ -122,9 +154,19 @@ export default function PolarisNavMenu({
           filterKeywords: 'problem create new prb',
         },
         {
+          title: 'Assigned to Me',
+          view: { type: 'list', table: 'problem', filterPreset: 'assigned_to_me' },
+          filterKeywords: 'problem assigned to me my work mine',
+        },
+        {
           title: 'Open Problems',
-          view: { type: 'list', table: 'problem' },
+          view: { type: 'list', table: 'problem', filterPreset: 'open' },
           filterKeywords: 'problem open list',
+        },
+        {
+          title: 'All Problems',
+          view: { type: 'list', table: 'problem', filterPreset: 'all' },
+          filterKeywords: 'problem all list prb',
         },
       ],
     },
@@ -138,9 +180,19 @@ export default function PolarisNavMenu({
           filterKeywords: 'change request chg create new',
         },
         {
+          title: 'Assigned to Me',
+          view: { type: 'list', table: 'change_request', filterPreset: 'assigned_to_me' },
+          filterKeywords: 'change request assigned to me my work mine',
+        },
+        {
           title: 'Open Changes',
-          view: { type: 'list', table: 'change_request' },
+          view: { type: 'list', table: 'change_request', filterPreset: 'open' },
           filterKeywords: 'change open chg list',
+        },
+        {
+          title: 'All Changes',
+          view: { type: 'list', table: 'change_request', filterPreset: 'all' },
+          filterKeywords: 'change request chg all list',
         },
       ],
     },
@@ -154,9 +206,19 @@ export default function PolarisNavMenu({
           filterKeywords: 'catalog request laptop software hardware order',
         },
         {
-          title: 'Requests & RITMs',
-          view: { type: 'list', table: 'sc_req_item' },
-          filterKeywords: 'requests ritm sctask sc_req_item',
+          title: 'Assigned Tasks (Fulfillment)',
+          view: { type: 'list', table: 'sc_req_item', filterPreset: 'assigned_to_me' },
+          filterKeywords: 'requests ritm sctask assigned to me fulfillment queue mine',
+        },
+        {
+          title: 'My Requests (Delivered to me)',
+          view: { type: 'list', table: 'sc_req_item', filterPreset: 'my_requests' },
+          filterKeywords: 'requests ritm sctask my requests delivered to me mine',
+        },
+        {
+          title: 'All Requests & RITMs',
+          view: { type: 'list', table: 'sc_req_item', filterPreset: 'all' },
+          filterKeywords: 'requests ritm sctask sc_req_item all',
         },
       ],
     },
@@ -187,7 +249,7 @@ export default function PolarisNavMenu({
       icon: Users,
       modules: [
         {
-          title: 'Identity Console (users, roles, groups, ACLs)',
+          title: 'Identity Console (Users & Roles)',
           view: { type: 'user_administration' },
           filterKeywords: 'users roles groups acl identity administration sys_user security active lock',
         },
@@ -273,7 +335,7 @@ export default function PolarisNavMenu({
     if (view.type === 'form') {
       openRecord(view.table, view.sys_id);
     } else if (view.type === 'list') {
-      openList(view.table);
+      openList(view.table, view.filterPreset);
     } else {
       setActiveView(view);
     }
@@ -283,6 +345,14 @@ export default function PolarisNavMenu({
   };
 
   const isCurrentView = (view: ActiveViewType) => {
+    if (activeView.type !== view.type) return false;
+    if (view.type === 'list' && activeView.type === 'list') {
+      if (view.table !== activeView.table) return false;
+      return (view.filterPreset || '') === (activeView.filterPreset || '');
+    }
+    if (view.type === 'form' && activeView.type === 'form') {
+      return view.table === activeView.table && view.sys_id === activeView.sys_id;
+    }
     return JSON.stringify(activeView) === JSON.stringify(view);
   };
 
@@ -371,6 +441,7 @@ export default function PolarisNavMenu({
                             key={m.title}
                             className={`sn-nav-item ${active ? 'active' : ''}`}
                             onClick={() => handleSelectModule(m.view)}
+                            title={m.title}
                           >
                             <span>{m.title}</span>
                             <button

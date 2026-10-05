@@ -87,7 +87,7 @@ export default function LoginView() {
 
           <div style={{ marginTop: '22px' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#7fd3c2', marginBottom: '8px' }}>
-              ONE-CLICK DEMO ACCOUNTS
+              ADMINISTRATOR ACCOUNT
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {DEFAULT_DEMO_CREDENTIALS.map((d) => (
@@ -96,11 +96,12 @@ export default function LoginView() {
                   onClick={() => fillDemo(d.user_name, d.password)}
                   style={{
                     fontSize: '12px',
-                    padding: '5px 10px',
+                    padding: '5px 12px',
                     borderRadius: '14px',
                     border: '1px solid rgba(255,255,255,0.25)',
                     color: '#fff',
                     background: 'rgba(255,255,255,0.08)',
+                    fontWeight: 600,
                   }}
                   title={`User ID: ${d.user_name} / Password: ${d.password}`}
                 >
@@ -243,7 +244,7 @@ export default function LoginView() {
 
             <div style={{ marginTop: '14px', padding: '10px 12px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0' }}>
               <div style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
-                DEMO PASSWORDS (for evaluators)
+                DEFAULT ADMINISTRATOR ACCOUNT
               </div>
               <div style={{ fontSize: '11.5px', color: '#64748b', lineHeight: 1.7, fontFamily: 'var(--font-mono, monospace)' }}>
                 {DEFAULT_DEMO_CREDENTIALS.map((d) => (

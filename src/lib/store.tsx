@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import {
   Role,
   User,
@@ -25,7 +25,6 @@ import {
   INITIAL_GROUPS,
   INITIAL_CIS,
   INITIAL_INCIDENTS,
-  DEMO_INCIDENTS,
   INITIAL_PROBLEMS,
   INITIAL_CHANGES,
   INITIAL_CATALOG_ITEMS,
@@ -37,6 +36,11 @@ import {
   INITIAL_FLOWS,
   INITIAL_UPDATE_SETS,
   INITIAL_ACTIVITY_LOGS,
+  SAMPLE_INCIDENTS,
+  SAMPLE_PROBLEMS,
+  SAMPLE_CHANGES,
+  SAMPLE_REQUESTS,
+  SAMPLE_USERS,
 } from './initialData';
 import { getSupabase } from './supabaseClient';
 import {
@@ -81,7 +85,7 @@ import {
 import { ensureIdentitySeed } from './identity/seed';
 
 export type ActiveViewType =
-  | { type: 'list'; table: string }
+  | { type: 'list'; table: string; filterPreset?: string }
   | { type: 'form'; table: string; sys_id: string }
   | { type: 'catalog' }
   | { type: 'catalog_item'; itemId: string }
@@ -115,7 +119,7 @@ interface PlatformContextType {
   activeView: ActiveViewType;
   setActiveView: (view: ActiveViewType) => void;
   openRecord: (table: string, sys_id: string) => void;
-  openList: (table: string) => void;
+  openList: (table: string, filterPreset?: string) => void;
 
   // Users, Account Auth & Impersonation
   currentUser: User;
@@ -202,7 +206,8 @@ interface PlatformContextType {
   saveClientScript: (script: ClientScript) => void;
   saveBusinessRule: (rule: BusinessRule) => void;
   saveFlow: (flow: FlowDefinition) => void;
-  submitCatalogOrder: (itemId: string, variables: Record<string, any>) => ServiceRequest;
+  saveServiceRequest: (req: Partial<ServiceRequest>) => ServiceRequest;
+  submitCatalogOrder: (itemId: string, variables: Record<string, any>, requestedForId?: string) => ServiceRequest;
   addActivityLog: (log: Omit<ActivityLog, 'sys_id' | 'created_at'>) => void;
   addAttachment: (att: Omit<Attachment, 'sys_id' | 'created_at'>) => Attachment;
 
@@ -235,6 +240,32 @@ function generateRandomToken(): string {
       .join('');
   }
   return `${Date.now().toString(36)}${Math.random().toString(36).substring(2)}`;
+}
+
+async function syncRecordToSupabase(table: string, record: any) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from(table).upsert(record);
+    if (error) {
+      console.warn(`[Supabase sync] Failed to upsert ${table} (${record?.sys_id}):`, error.message);
+    }
+  } catch (err: any) {
+    console.warn(`[Supabase sync] Error upserting to ${table}:`, err?.message || err);
+  }
+}
+
+async function syncDeleteFromSupabase(table: string, sys_id: string) {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from(table).delete().eq('sys_id', sys_id);
+    if (error) {
+      console.warn(`[Supabase sync] Failed to delete from ${table} (${sys_id}):`, error.message);
+    }
+  } catch (err: any) {
+    console.warn(`[Supabase sync] Error deleting from ${table}:`, err?.message || err);
+  }
 }
 
 const DEFAULT_IDENTITY_ROLES: SysRole[] = [
@@ -292,7 +323,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const [changes, setChanges] = useState<ChangeRequest[]>(INITIAL_CHANGES);
   const [groups, setGroups] = useState<Group[]>(INITIAL_GROUPS);
   const [cis, setCis] = useState<ConfigurationItem[]>(INITIAL_CIS);
-  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>(INITIAL_CATALOG_ITEMS);
+  const [catalogItems] = useState<CatalogItem[]>(INITIAL_CATALOG_ITEMS);
   const [serviceRequests, setServiceRequests] = useState<ServiceRequest[]>(INITIAL_REQUESTS);
   const [knowledgeArticles, setKnowledgeArticles] = useState<KnowledgeArticle[]>(INITIAL_KNOWLEDGE);
   const [tables, setTables] = useState<TableDefinition[]>(INITIAL_TABLES);
@@ -301,18 +332,8 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const [flows, setFlows] = useState<FlowDefinition[]>(INITIAL_FLOWS);
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>(INITIAL_ACTIVITY_LOGS);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [customRecords, setCustomRecords] = useState<Record<string, any[]>>({
-    u_loaner_laptop: [
-      {
-        sys_id: 'loaner_1',
-        u_asset_tag: 'AST-LNR-102',
-        u_borrower: 'usr_abel',
-        u_checkout_date: '2026-09-20 09:00:00',
-        u_expected_return: '2026-09-28 17:00:00',
-        u_status: 'checked_out',
-      },
-    ],
-  });
+  const [customRecords, setCustomRecords] = useState<Record<string, any[]>>({});
+  const isLoadedRef = useRef<boolean>(false);
 
   // UI preferences
   const [theme, setTheme] = useState<'polaris-light' | 'polaris-dark' | 'high-contrast'>('polaris-light');
@@ -335,30 +356,22 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     { id: 'fav_4', title: 'Flow Designer', view: { type: 'flow_designer' } },
   ]);
 
-  const [history, setHistory] = useState<HistoryItem[]>([
-    {
-      id: 'hist_init_1',
-      title: 'INC0010001 - Outlook crashing',
-      table: 'incident',
-      view: { type: 'form', table: 'incident', sys_id: 'inc_1001' },
-      timestamp: '5 mins ago',
-    },
-    {
-      id: 'hist_init_2',
-      title: 'Incidents List',
-      table: 'incident',
-      view: { type: 'list', table: 'incident' },
-      timestamp: '15 mins ago',
-    },
-  ]);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
 
   // Apply a resolved EffectiveIdentity to session state + directory.
   const applyIdentity = (
     resolved: EffectiveIdentity,
     roleById: Map<string, string>
   ) => {
-    const legacy = toLegacyUser(resolved.sysUser, resolved.effectiveRoleNames);
-    setIdentity(resolved);
+    // Ensure every authenticated user has at least baseline 'end_user' role so they are not blocked by ACLs
+    const effectiveRoles = resolved.effectiveRoleNames.includes('end_user')
+      ? resolved.effectiveRoleNames
+      : [...resolved.effectiveRoleNames, 'end_user'];
+    const legacy = toLegacyUser(resolved.sysUser, effectiveRoles);
+    setIdentity({
+      ...resolved,
+      effectiveRoleNames: effectiveRoles,
+    });
     setActualUser(legacy);
     setCurrentUser(legacy);
     setIsAuthenticated(true);
@@ -466,38 +479,103 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load from LocalStorage on mount (scheduled asynchronously to avoid cascading renders)
+  // Load from LocalStorage on mount (asynchronously scheduled with isLoadedRef guard to prevent cascading renders and data wipes)
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const timer = setTimeout(() => {
       try {
-        const seedCleared = localStorage.getItem('sn_seed_data_cleared');
-        if (!seedCleared) {
-          // Clear default seed data on first run as requested by user
-          localStorage.setItem('sn_seed_data_cleared', 'true');
-          localStorage.removeItem('sn_data_incidents');
-          setIncidents([]);
-        } else {
-          const savedIncidents = localStorage.getItem('sn_data_incidents');
-          if (savedIncidents) {
-            try {
-              const parsed = JSON.parse(savedIncidents);
-              // Clean out old hardcoded demo records if user hadn't explicitly loaded demo data
-              const isOldDemoOnly = Array.isArray(parsed) && parsed.length > 0 && parsed.every((r: any) => r.sys_id && r.sys_id.startsWith('inc_100'));
-              if (isOldDemoOnly && localStorage.getItem('sn_demo_explicitly_loaded') !== 'true') {
-                localStorage.removeItem('sn_data_incidents');
-                setIncidents([]);
-              } else {
-                setIncidents(parsed);
-              }
-            } catch {
-              setIncidents([]);
+        // 1. Incidents
+        const savedIncidents = localStorage.getItem('sn_data_incidents');
+        if (savedIncidents) {
+          try {
+            const parsed = JSON.parse(savedIncidents);
+            if (Array.isArray(parsed)) {
+              const realIncidents = parsed
+                .filter((r: any) => !r.sys_id || (!r.sys_id.startsWith('inc_demo')))
+                .map((inc: any) => {
+                  if (!inc || typeof inc.work_notes !== 'string') return inc;
+                  const blocks = inc.work_notes
+                    .split(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[^\]]*\]/g)
+                    .map((b: string) => b.trim())
+                    .filter(Boolean);
+                  const unique = Array.from(new Set(blocks));
+                  return {
+                    ...inc,
+                    work_notes: unique.join('\n\n'),
+                  };
+                });
+              setIncidents(realIncidents);
             }
-          } else {
-            setIncidents([]);
+          } catch {
+            // ignore parse error
           }
         }
 
+        // 2. Problems
+        const savedProblems = localStorage.getItem('sn_data_problems');
+        if (savedProblems) {
+          try {
+            const parsed = JSON.parse(savedProblems);
+            if (Array.isArray(parsed)) setProblems(parsed);
+          } catch {}
+        }
+
+        // 3. Changes
+        const savedChanges = localStorage.getItem('sn_data_changes');
+        if (savedChanges) {
+          try {
+            const parsed = JSON.parse(savedChanges);
+            if (Array.isArray(parsed)) setChanges(parsed);
+          } catch {}
+        }
+
+        // 4. Custom Records
+        const savedCustomRecords = localStorage.getItem('sn_data_custom_records');
+        if (savedCustomRecords) {
+          try {
+            const parsed = JSON.parse(savedCustomRecords);
+            if (parsed && typeof parsed === 'object') setCustomRecords(parsed);
+          } catch {}
+        }
+
+        // 5. Service Requests
+        const savedRequests = localStorage.getItem('sn_data_requests');
+        if (savedRequests) {
+          try {
+            const parsedReqs = JSON.parse(savedRequests);
+            if (Array.isArray(parsedReqs)) {
+              const realReqs = parsedReqs.filter((r: any) => !r.sys_id || !r.sys_id.startsWith('req_demo'));
+              setServiceRequests(realReqs);
+            }
+          } catch {}
+        }
+
+        // 6. Activity Logs
+        const savedLogs = localStorage.getItem('sn_data_activity');
+        if (savedLogs) {
+          try {
+            const parsedLogs = JSON.parse(savedLogs);
+            if (Array.isArray(parsedLogs)) {
+              const realLogs = parsedLogs.filter(
+                (l: any) => !l.record_id || (!l.record_id.startsWith('inc_demo') && !l.record_id.startsWith('req_demo'))
+              );
+              const dedupedLogs: ActivityLog[] = [];
+              const seen = new Set<string>();
+              for (const l of realLogs) {
+                const raw = l.text || l.new_value || '';
+                const cleanText = raw.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[^\]]*\]\s*/g, '').trim();
+                const key = `${l.table_name || ''}_${l.record_id || ''}_${l.type || ''}_${cleanText}`;
+                if (!seen.has(key)) {
+                  seen.add(key);
+                  dedupedLogs.push({ ...l, text: cleanText || l.text });
+                }
+              }
+              setActivityLogs(dedupedLogs);
+            }
+          } catch {}
+        }
+
+        // 7. UI Preferences & Meta
         const savedTheme = localStorage.getItem('sn_ui_theme');
         if (savedTheme) setTheme(savedTheme as any);
 
@@ -508,98 +586,318 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         if (savedCols) setListColumns(JSON.parse(savedCols));
 
         const savedTables = localStorage.getItem('sn_data_tables');
-        if (savedTables) setTables(JSON.parse(savedTables));
+        if (savedTables) {
+          try {
+            const parsedTables = JSON.parse(savedTables);
+            if (Array.isArray(parsedTables)) {
+              setTables(parsedTables.filter((t: any) => t.name !== 'u_loaner_laptop'));
+            }
+          } catch {}
+        }
 
         const savedScripts = localStorage.getItem('sn_data_client_scripts');
-        if (savedScripts) setClientScripts(JSON.parse(savedScripts));
+        if (savedScripts) {
+          try {
+            setClientScripts(JSON.parse(savedScripts));
+          } catch {}
+        }
 
         const savedRules = localStorage.getItem('sn_data_business_rules');
-        if (savedRules) setBusinessRules(JSON.parse(savedRules));
+        if (savedRules) {
+          try {
+            setBusinessRules(JSON.parse(savedRules));
+          } catch {}
+        }
 
         const savedFlows = localStorage.getItem('sn_data_flows');
-        if (savedFlows) setFlows(JSON.parse(savedFlows));
-
-        const savedRequests = localStorage.getItem('sn_data_requests');
-        if (savedRequests) setServiceRequests(JSON.parse(savedRequests));
-
-        const savedLogs = localStorage.getItem('sn_data_activity');
-        if (savedLogs) setActivityLogs(JSON.parse(savedLogs));
+        if (savedFlows) {
+          try {
+            setFlows(JSON.parse(savedFlows));
+          } catch {}
+        }
       } catch (e) {
         console.error('Failed to load cached ServiceNow data:', e);
+      } finally {
+        // Mark initialization complete so subsequent state changes persist
+        isLoadedRef.current = true;
       }
     }, 0);
 
     return () => clearTimeout(timer);
   }, []);
 
-  // Save changes to localStorage
+  // Save changes to localStorage (Guarded by isLoadedRef to prevent overwriting on mount)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
     localStorage.setItem('sn_data_incidents', JSON.stringify(incidents));
   }, [incidents]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem('sn_ui_theme', theme);
-  }, [theme]);
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_data_problems', JSON.stringify(problems));
+  }, [problems]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem('sn_ui_compact', JSON.stringify(compactDensity));
-  }, [compactDensity]);
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_data_changes', JSON.stringify(changes));
+  }, [changes]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem('sn_list_columns', JSON.stringify(listColumns));
-  }, [listColumns]);
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_data_custom_records', JSON.stringify(customRecords));
+  }, [customRecords]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem('sn_data_tables', JSON.stringify(tables));
-  }, [tables]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem('sn_data_client_scripts', JSON.stringify(clientScripts));
-  }, [clientScripts]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem('sn_data_business_rules', JSON.stringify(businessRules));
-  }, [businessRules]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem('sn_data_flows', JSON.stringify(flows));
-  }, [flows]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
     localStorage.setItem('sn_data_requests', JSON.stringify(serviceRequests));
   }, [serviceRequests]);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
     localStorage.setItem('sn_data_activity', JSON.stringify(activityLogs));
   }, [activityLogs]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_ui_theme', theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_ui_compact', JSON.stringify(compactDensity));
+  }, [compactDensity]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_list_columns', JSON.stringify(listColumns));
+  }, [listColumns]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_data_tables', JSON.stringify(tables));
+  }, [tables]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_data_client_scripts', JSON.stringify(clientScripts));
+  }, [clientScripts]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_data_business_rules', JSON.stringify(businessRules));
+  }, [businessRules]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !isLoadedRef.current) return;
+    localStorage.setItem('sn_data_flows', JSON.stringify(flows));
+  }, [flows]);
 
   // Sync with Supabase in background if configured
   useEffect(() => {
     const supabase = getSupabase();
     if (!supabase) return;
 
-    // Load initial data from Supabase if available
-    async function loadFromSupabase() {
+    let isMounted = true;
+
+    async function loadAllFromSupabase() {
       try {
-        const { data: supaIncidents } = await supabase!.from('sn_incidents').select('*');
-        if (supaIncidents && supaIncidents.length > 0) {
-          setIncidents(supaIncidents);
+        // 1. Incidents
+        const { data: remoteIncidents, error: incErr } = await supabase!.from('incident').select('*');
+        if (!incErr && remoteIncidents && isMounted) {
+          setIncidents((prev) => {
+            const remoteMap = new Map(remoteIncidents.map((i: any) => [i.sys_id, i]));
+            const merged = [...remoteIncidents];
+            for (const loc of prev) {
+              if (!remoteMap.has(loc.sys_id) && !loc.sys_id.startsWith('inc_demo') && !loc.sys_id.startsWith('inc_sample')) {
+                merged.push(loc);
+                void syncRecordToSupabase('incident', loc);
+              }
+            }
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_incidents', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        // 2. Problems
+        const { data: remoteProblems, error: prbErr } = await supabase!.from('problem').select('*');
+        if (!prbErr && remoteProblems && isMounted) {
+          setProblems((prev) => {
+            const remoteMap = new Map(remoteProblems.map((p: any) => [p.sys_id, p]));
+            const merged = [...remoteProblems];
+            for (const loc of prev) {
+              if (!remoteMap.has(loc.sys_id) && !loc.sys_id.startsWith('prb_demo')) {
+                merged.push(loc);
+                void syncRecordToSupabase('problem', loc);
+              }
+            }
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_problems', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        // 3. Changes
+        const { data: remoteChanges, error: chgErr } = await supabase!.from('change_request').select('*');
+        if (!chgErr && remoteChanges && isMounted) {
+          setChanges((prev) => {
+            const remoteMap = new Map(remoteChanges.map((c: any) => [c.sys_id, c]));
+            const merged = [...remoteChanges];
+            for (const loc of prev) {
+              if (!remoteMap.has(loc.sys_id) && !loc.sys_id.startsWith('chg_demo')) {
+                merged.push(loc);
+                void syncRecordToSupabase('change_request', loc);
+              }
+            }
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_changes', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        // 4. Service Requests (sc_req_item)
+        const { data: remoteRequests, error: reqErr } = await supabase!.from('sc_req_item').select('*');
+        if (!reqErr && remoteRequests && isMounted) {
+          setServiceRequests((prev) => {
+            const remoteMap = new Map(remoteRequests.map((r: any) => [r.sys_id, r]));
+            const merged = [...remoteRequests];
+            for (const loc of prev) {
+              if (!remoteMap.has(loc.sys_id) && !loc.sys_id.startsWith('req_demo')) {
+                merged.push(loc);
+                void syncRecordToSupabase('sc_req_item', loc);
+              }
+            }
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(merged));
+            return merged;
+          });
+        }
+
+        // 5. Activity Logs (sys_activity_log)
+        const { data: remoteLogs, error: logErr } = await supabase!.from('sys_activity_log').select('*');
+        if (!logErr && remoteLogs && isMounted) {
+          setActivityLogs((prev) => {
+            const remoteMap = new Map(remoteLogs.map((l: any) => [l.sys_id, l]));
+            const merged = [...remoteLogs];
+            for (const loc of prev) {
+              if (!remoteMap.has(loc.sys_id) && !loc.record_id?.startsWith('inc_demo') && !loc.record_id?.startsWith('req_demo')) {
+                merged.push(loc);
+                void syncRecordToSupabase('sys_activity_log', loc);
+              }
+            }
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_activity', JSON.stringify(merged));
+            return merged;
+          });
         }
       } catch (err) {
-        console.warn('Supabase sync skipped (schema not initialized):', err);
+        console.warn('Supabase initial fetch skipped (schema not initialized):', err);
       }
     }
-    loadFromSupabase();
+
+    loadAllFromSupabase();
+
+    // Setup Realtime subscriptions across all ITSM tables
+    const channel = supabase
+      .channel('servicenow_cloud_realtime_sync')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'incident' }, (payload) => {
+        if (!isMounted) return;
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const item = payload.new as Incident;
+          setIncidents((prev) => {
+            const exists = prev.some((i) => i.sys_id === item.sys_id);
+            const next = exists ? prev.map((i) => (i.sys_id === item.sys_id ? item : i)) : [item, ...prev];
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_incidents', JSON.stringify(next));
+            return next;
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const oldId = (payload.old as any)?.sys_id;
+          if (oldId) {
+            setIncidents((prev) => {
+              const next = prev.filter((i) => i.sys_id !== oldId);
+              if (typeof window !== 'undefined') localStorage.setItem('sn_data_incidents', JSON.stringify(next));
+              return next;
+            });
+          }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'problem' }, (payload) => {
+        if (!isMounted) return;
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const item = payload.new as Problem;
+          setProblems((prev) => {
+            const exists = prev.some((p) => p.sys_id === item.sys_id);
+            const next = exists ? prev.map((p) => (p.sys_id === item.sys_id ? item : p)) : [item, ...prev];
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_problems', JSON.stringify(next));
+            return next;
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const oldId = (payload.old as any)?.sys_id;
+          if (oldId) {
+            setProblems((prev) => {
+              const next = prev.filter((p) => p.sys_id !== oldId);
+              if (typeof window !== 'undefined') localStorage.setItem('sn_data_problems', JSON.stringify(next));
+              return next;
+            });
+          }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'change_request' }, (payload) => {
+        if (!isMounted) return;
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const item = payload.new as ChangeRequest;
+          setChanges((prev) => {
+            const exists = prev.some((c) => c.sys_id === item.sys_id);
+            const next = exists ? prev.map((c) => (c.sys_id === item.sys_id ? item : c)) : [item, ...prev];
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_changes', JSON.stringify(next));
+            return next;
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const oldId = (payload.old as any)?.sys_id;
+          if (oldId) {
+            setChanges((prev) => {
+              const next = prev.filter((c) => c.sys_id !== oldId);
+              if (typeof window !== 'undefined') localStorage.setItem('sn_data_changes', JSON.stringify(next));
+              return next;
+            });
+          }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sc_req_item' }, (payload) => {
+        if (!isMounted) return;
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          const item = payload.new as ServiceRequest;
+          setServiceRequests((prev) => {
+            const exists = prev.some((r) => r.sys_id === item.sys_id);
+            const next = exists ? prev.map((r) => (r.sys_id === item.sys_id ? item : r)) : [item, ...prev];
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(next));
+            return next;
+          });
+        } else if (payload.eventType === 'DELETE') {
+          const oldId = (payload.old as any)?.sys_id;
+          if (oldId) {
+            setServiceRequests((prev) => {
+              const next = prev.filter((r) => r.sys_id !== oldId);
+              if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(next));
+              return next;
+            });
+          }
+        }
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sys_activity_log' }, (payload) => {
+        if (!isMounted) return;
+        if (payload.eventType === 'INSERT') {
+          const item = payload.new as ActivityLog;
+          setActivityLogs((prev) => {
+            const exists = prev.some((l) => l.sys_id === item.sys_id);
+            if (exists) return prev;
+            const next = [item, ...prev];
+            if (typeof window !== 'undefined') localStorage.setItem('sn_data_activity', JSON.stringify(next));
+            return next;
+          });
+        }
+      })
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const setActiveView = (view: ActiveViewType) => {
@@ -612,9 +910,10 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     addToHistory(title, { type: 'form', table, sys_id }, table);
   };
 
-  const openList = (table: string) => {
-    setActiveViewInternal({ type: 'list', table });
-    addToHistory(`${table.toUpperCase()} List`, { type: 'list', table }, table);
+  const openList = (table: string, filterPreset?: string) => {
+    setActiveViewInternal({ type: 'list', table, filterPreset });
+    const suffix = filterPreset ? ` (${filterPreset.replace(/_/g, ' ')})` : '';
+    addToHistory(`${table.toUpperCase()} List${suffix}`, { type: 'list', table, filterPreset }, table);
   };
 
   const addToHistory = (title: string, view: ActiveViewType, table?: string) => {
@@ -869,9 +1168,10 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     setCurrentUser(actualUser);
   };
 
-  const effectiveRoleNames = identity
-    ? identity.effectiveRoleNames
-    : currentUser.roles.map((r) => r.toLowerCase());
+  const isImpersonating = currentUser.sys_id !== actualUser.sys_id;
+  const effectiveRoleNames = (isImpersonating || !identity)
+    ? currentUser.roles.map((r) => r.toLowerCase())
+    : identity.effectiveRoleNames;
   const hasRole = (role: User['roles'][number]) =>
     effectiveRoleNames.includes(role.toLowerCase());
   const isAdmin =
@@ -884,7 +1184,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
    * (Incident/Problem/Change/Request/Knowledge) call this directly.
    */
   const aclCan = (resource: AclResource, operation: AclOperation): boolean => {
-    if (identity) {
+    if (identity && !isImpersonating) {
       const roleById = new Map<string, string>();
       for (const r of [...identity.directRoles, ...identity.groupRoles]) {
         roleById.set(r.id, r.name);
@@ -920,7 +1220,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
   // View gate maps legacy views onto (resource, read) ACL checks.
   const canAccess = (viewType: string, table?: string): boolean => {
-    if (identity) {
+    if (identity && !isImpersonating) {
       const adminViews = new Set([
         'script_background',
         'client_scripts',
@@ -942,6 +1242,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
           sc_req_item: 'sc_req_item',
           kb_knowledge: 'kb_knowledge',
           sys_user: 'sys_user',
+          task: 'incident',
         };
         const resource = table ? tableToResource[table] : undefined;
         if (resource) return aclCan(resource, 'read');
@@ -1283,6 +1584,15 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         ? userNum
         : autoNum;
 
+      const noteText = incidentData.work_notes?.trim();
+      const commText = incidentData.comments?.trim();
+      const initialWorkNotes = noteText
+        ? `[${now} - ${currentUser.name} (Work notes)]\n${noteText}`
+        : '';
+      const initialComments = commText
+        ? `[${now} - ${currentUser.name} (Customer comments)]\n${commText}`
+        : '';
+
       const newInc: Incident = {
         short_description: incidentData.short_description || 'New Incident',
         description: incidentData.description || '',
@@ -1296,8 +1606,8 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         assignment_group: incidentData.assignment_group || 'grp_servicedesk',
         assigned_to: incidentData.assigned_to,
         cmdb_ci: incidentData.cmdb_ci,
-        work_notes: incidentData.work_notes,
-        comments: incidentData.comments,
+        work_notes: initialWorkNotes,
+        comments: initialComments,
         sys_created_on: now,
         sys_updated_on: now,
         sys_created_by: currentUser.user_name,
@@ -1307,7 +1617,11 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       };
 
       saved = runIncidentBusinessRules(newInc);
-      setIncidents((prev) => [saved, ...prev.filter((i) => i.sys_id !== saved.sys_id)]);
+      setIncidents((prev) => {
+        const next = [saved, ...prev.filter((i) => i.sys_id !== saved.sys_id)];
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_incidents', JSON.stringify(next));
+        return next;
+      });
 
       addActivityLog({
         table_name: 'incident',
@@ -1319,11 +1633,29 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         new_value: `Incident ${saved.number} created`,
       });
 
-      // Also sync to Supabase if connected
-      const supabase = getSupabase();
-      if (supabase) {
-        supabase.from('sn_incidents').insert(saved).then();
+      if (noteText) {
+        addActivityLog({
+          table_name: 'incident',
+          record_id: saved.sys_id,
+          user_name: currentUser.name,
+          user_id: currentUser.sys_id,
+          type: 'work_notes',
+          text: noteText,
+        });
       }
+      if (commText) {
+        addActivityLog({
+          table_name: 'incident',
+          record_id: saved.sys_id,
+          user_name: currentUser.name,
+          user_id: currentUser.sys_id,
+          type: 'comments',
+          text: commText,
+        });
+      }
+
+      // Sync to Supabase
+      void syncRecordToSupabase('incident', saved);
     } else {
       const existing = incidents.find((i) => i.sys_id === incidentData.sys_id);
       const userNum = incidentData.number?.trim();
@@ -1331,43 +1663,66 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         ? userNum
         : (existing?.number || `INC00${10000 + incidents.length}`);
 
+      const noteText = incidentData.work_notes?.trim();
+      const commText = incidentData.comments?.trim();
+
+      // Clean raw text (strip any leading timestamp headers so they don't compound)
+      const cleanNote = noteText ? noteText.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[^\]]*\]\s*/g, '').trim() : '';
+      const cleanComm = commText ? commText.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[^\]]*\]\s*/g, '').trim() : '';
+
+      let mergedWorkNotes = existing?.work_notes || '';
+      if (cleanNote && !mergedWorkNotes.includes(cleanNote)) {
+        const header = `[${now} - ${currentUser.name} (Work notes)]\n${cleanNote}`;
+        mergedWorkNotes = mergedWorkNotes ? `${header}\n\n${mergedWorkNotes}` : header;
+      }
+
+      let mergedComments = existing?.comments || '';
+      if (cleanComm && !mergedComments.includes(cleanComm)) {
+        const header = `[${now} - ${currentUser.name} (Customer comments)]\n${cleanComm}`;
+        mergedComments = mergedComments ? `${header}\n\n${mergedComments}` : header;
+      }
+
       const updated = {
         ...existing,
         ...incidentData,
+        work_notes: mergedWorkNotes,
+        comments: mergedComments,
         sys_id: incidentData.sys_id,
         number: finalNumber,
         sys_updated_on: now,
       } as Incident;
 
       saved = runIncidentBusinessRules(updated, existing);
-      setIncidents((prev) => prev.map((i) => (i.sys_id === saved.sys_id ? saved : i)));
+      setIncidents((prev) => {
+        const next = prev.map((i) => (i.sys_id === saved.sys_id ? saved : i));
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_incidents', JSON.stringify(next));
+        return next;
+      });
 
-      // Record activity if work notes or comments added
-      if (incidentData.work_notes && incidentData.work_notes.trim()) {
+      // Record activity ONLY for fresh clean text
+      if (cleanNote) {
         addActivityLog({
           table_name: 'incident',
           record_id: saved.sys_id,
           user_name: currentUser.name,
           user_id: currentUser.sys_id,
           type: 'work_notes',
-          text: incidentData.work_notes,
+          text: cleanNote,
         });
       }
-      if (incidentData.comments && incidentData.comments.trim()) {
+      if (cleanComm) {
         addActivityLog({
           table_name: 'incident',
           record_id: saved.sys_id,
           user_name: currentUser.name,
           user_id: currentUser.sys_id,
           type: 'comments',
-          text: incidentData.comments,
+          text: cleanComm,
         });
       }
 
-      const supabase = getSupabase();
-      if (supabase) {
-        supabase.from('sn_incidents').update(saved).eq('sys_id', saved.sys_id).then();
-      }
+      // Sync to Supabase
+      void syncRecordToSupabase('incident', saved);
     }
 
     return saved;
@@ -1376,32 +1731,98 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
   const deleteRecord = (table: string, sys_id: string) => {
     switch (table) {
       case 'incident':
-        setIncidents((prev) => prev.filter((i) => i.sys_id !== sys_id));
+        setIncidents((prev) => {
+          const next = prev.filter((i) => i.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_incidents', JSON.stringify(next));
+          return next;
+        });
         break;
       case 'problem':
-        setProblems((prev) => prev.filter((p) => p.sys_id !== sys_id));
+        setProblems((prev) => {
+          const next = prev.filter((p) => p.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_problems', JSON.stringify(next));
+          return next;
+        });
         break;
       case 'change_request':
-        setChanges((prev) => prev.filter((c) => c.sys_id !== sys_id));
+        setChanges((prev) => {
+          const next = prev.filter((c) => c.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_changes', JSON.stringify(next));
+          return next;
+        });
         break;
       case 'sc_req_item':
-        setServiceRequests((prev) => prev.filter((r) => r.sys_id !== sys_id));
+        setServiceRequests((prev) => {
+          const next = prev.filter((r) => r.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(next));
+          return next;
+        });
         break;
       case 'kb_knowledge':
         setKnowledgeArticles((prev) => prev.filter((k) => k.sys_id !== sys_id));
         break;
+      case 'task':
+        setIncidents((prev) => {
+          const next = prev.filter((i) => i.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_incidents', JSON.stringify(next));
+          return next;
+        });
+        setProblems((prev) => {
+          const next = prev.filter((p) => p.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_problems', JSON.stringify(next));
+          return next;
+        });
+        setChanges((prev) => {
+          const next = prev.filter((c) => c.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_changes', JSON.stringify(next));
+          return next;
+        });
+        setServiceRequests((prev) => {
+          const next = prev.filter((r) => r.sys_id !== sys_id);
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(next));
+          return next;
+        });
+        break;
       default:
-        setCustomRecords((prev) => ({
-          ...prev,
-          [table]: (prev[table] || []).filter((r: any) => r.sys_id !== sys_id),
-        }));
+        setCustomRecords((prev) => {
+          const next = {
+            ...prev,
+            [table]: (prev[table] || []).filter((r: any) => r.sys_id !== sys_id),
+          };
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_custom_records', JSON.stringify(next));
+          return next;
+        });
         break;
     }
 
+    if (table === 'incident') {
+      void syncDeleteFromSupabase('incident', sys_id);
+    } else if (table === 'problem') {
+      void syncDeleteFromSupabase('problem', sys_id);
+    } else if (table === 'change_request') {
+      void syncDeleteFromSupabase('change_request', sys_id);
+    } else if (table === 'sc_req_item') {
+      void syncDeleteFromSupabase('sc_req_item', sys_id);
+    } else if (table === 'kb_knowledge') {
+      void syncDeleteFromSupabase('kb_knowledge', sys_id);
+    } else if (table === 'task') {
+      void syncDeleteFromSupabase('incident', sys_id);
+      void syncDeleteFromSupabase('problem', sys_id);
+      void syncDeleteFromSupabase('change_request', sys_id);
+      void syncDeleteFromSupabase('sc_req_item', sys_id);
+    } else {
+      void syncDeleteFromSupabase(table, sys_id);
+    }
+
+    // Clean up activity logs associated with this record
+    setActivityLogs((prev) => {
+      const next = prev.filter((l) => l.record_id !== sys_id);
+      if (typeof window !== 'undefined') localStorage.setItem('sn_data_activity', JSON.stringify(next));
+      return next;
+    });
     const supabase = getSupabase();
     if (supabase) {
-      const dbTable = table === 'incident' ? 'sn_incidents' : table;
-      supabase.from(dbTable).delete().eq('sys_id', sys_id).then();
+      void supabase.from('sys_activity_log').delete().eq('record_id', sys_id);
     }
   };
 
@@ -1439,14 +1860,23 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         sys_id: generatedSysId,
         number: finalNumber,
       };
-      setProblems((prev) => [saved, ...prev.filter((p) => p.sys_id !== saved.sys_id)]);
+      setProblems((prev) => {
+        const next = [saved, ...prev.filter((p) => p.sys_id !== saved.sys_id)];
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_problems', JSON.stringify(next));
+        return next;
+      });
     } else {
       const existing = problems.find((p) => p.sys_id === probData.sys_id);
       const userNum = probData.number?.trim();
       const finalNumber = userNum || existing?.number || probData.number;
       saved = { ...existing, ...probData, sys_id: probData.sys_id, number: finalNumber, sys_updated_on: now } as Problem;
-      setProblems((prev) => prev.map((p) => (p.sys_id === saved.sys_id ? saved : p)));
+      setProblems((prev) => {
+        const next = prev.map((p) => (p.sys_id === saved.sys_id ? saved : p));
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_problems', JSON.stringify(next));
+        return next;
+      });
     }
+    void syncRecordToSupabase('problem', saved);
     return saved;
   };
 
@@ -1483,14 +1913,23 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         sys_id: generatedSysId,
         number: finalNumber,
       };
-      setChanges((prev) => [saved, ...prev.filter((c) => c.sys_id !== saved.sys_id)]);
+      setChanges((prev) => {
+        const next = [saved, ...prev.filter((c) => c.sys_id !== saved.sys_id)];
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_changes', JSON.stringify(next));
+        return next;
+      });
     } else {
       const existing = changes.find((c) => c.sys_id === chgData.sys_id);
       const userNum = chgData.number?.trim();
       const finalNumber = userNum || existing?.number || chgData.number;
       saved = { ...existing, ...chgData, sys_id: chgData.sys_id, number: finalNumber, sys_updated_on: now } as ChangeRequest;
-      setChanges((prev) => prev.map((c) => (c.sys_id === saved.sys_id ? saved : c)));
+      setChanges((prev) => {
+        const next = prev.map((c) => (c.sys_id === saved.sys_id ? saved : c));
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_changes', JSON.stringify(next));
+        return next;
+      });
     }
+    void syncRecordToSupabase('change_request', saved);
     return saved;
   };
 
@@ -1502,16 +1941,17 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
 
     setCustomRecords((prev) => {
       const tableList = prev[table] || [];
-      if (isNew) {
-        return { ...prev, [table]: [updated, ...tableList] };
-      } else {
-        return {
-          ...prev,
-          [table]: tableList.map((r) => (r.sys_id === sys_id ? updated : r)),
-        };
-      }
+      const nextRecords = isNew
+        ? { ...prev, [table]: [updated, ...tableList] }
+        : {
+            ...prev,
+            [table]: tableList.map((r) => (r.sys_id === sys_id ? updated : r)),
+          };
+      if (typeof window !== 'undefined') localStorage.setItem('sn_data_custom_records', JSON.stringify(nextRecords));
+      return nextRecords;
     });
 
+    void syncRecordToSupabase(table, updated);
     return updated;
   };
 
@@ -1557,7 +1997,11 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     recordUpdateSetChange('Flow', targetFlow.name, isNew ? 'Insert' : 'Update');
   };
 
-  const submitCatalogOrder = (itemId: string, variables: Record<string, any>): ServiceRequest => {
+  const submitCatalogOrder = (
+    itemId: string,
+    variables: Record<string, any>,
+    requestedForId?: string
+  ): ServiceRequest => {
     const item = catalogItems.find((i) => i.sys_id === itemId);
     const count = serviceRequests.length + 1;
     const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
@@ -1569,7 +2013,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       sctask_number: `SCTASK00${10000 + count}`,
       catalog_item_id: itemId,
       catalog_item_name: item?.name || 'Catalog Item',
-      requested_for: currentUser.sys_id,
+      requested_for: requestedForId || currentUser.sys_id,
       requested_by: currentUser.sys_id,
       stage: 'Fulfillment',
       state: '2',
@@ -1579,7 +2023,11 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       sys_updated_on: now,
     };
 
-    setServiceRequests((prev) => [newReq, ...prev]);
+    setServiceRequests((prev) => {
+      const next = [newReq, ...prev];
+      if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(next));
+      return next;
+    });
 
     // Add activity log
     addActivityLog({
@@ -1592,16 +2040,99 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
       new_value: `Catalog order submitted: ${newReq.ritm_number}`,
     });
 
+    void syncRecordToSupabase('sc_req_item', newReq);
     return newReq;
   };
 
+  const saveServiceRequest = (reqData: Partial<ServiceRequest>): ServiceRequest => {
+    const isNew = !reqData.sys_id || reqData.sys_id === 'new';
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    let saved: ServiceRequest;
+    if (isNew) {
+      const generatedSysId = generateSysId('req');
+      const count = serviceRequests.length + 1;
+      saved = {
+        sys_id: generatedSysId,
+        number: reqData.number || `REQ00${10000 + count}`,
+        ritm_number: reqData.ritm_number || `RITM00${10000 + count}`,
+        sctask_number: reqData.sctask_number || `SCTASK00${10000 + count}`,
+        catalog_item_id: reqData.catalog_item_id || '',
+        catalog_item_name: reqData.catalog_item_name || 'Service Request',
+        requested_for: reqData.requested_for || currentUser.sys_id,
+        requested_by: reqData.requested_by || currentUser.sys_id,
+        assigned_to: reqData.assigned_to,
+        assignment_group: reqData.assignment_group,
+        short_description: reqData.short_description || reqData.catalog_item_name || 'Service Request',
+        description: reqData.description || '',
+        stage: reqData.stage || 'Fulfillment',
+        state: reqData.state || '2',
+        price: reqData.price || 0,
+        variable_responses: reqData.variable_responses || {},
+        sys_created_on: now,
+        sys_updated_on: now,
+        ...reqData,
+      };
+      setServiceRequests((prev) => {
+        const next = [saved, ...prev.filter((r) => r.sys_id !== saved.sys_id)];
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(next));
+        return next;
+      });
+    } else {
+      const existing = serviceRequests.find((r) => r.sys_id === reqData.sys_id);
+      saved = {
+        ...existing,
+        ...reqData,
+        sys_id: reqData.sys_id,
+        sys_updated_on: now,
+      } as ServiceRequest;
+      setServiceRequests((prev) => {
+        const next = prev.map((r) => (r.sys_id === saved.sys_id ? saved : r));
+        if (typeof window !== 'undefined') localStorage.setItem('sn_data_requests', JSON.stringify(next));
+        return next;
+      });
+    }
+    void syncRecordToSupabase('sc_req_item', saved);
+    return saved;
+  };
+
   const addActivityLog = (log: Omit<ActivityLog, 'sys_id' | 'created_at'>) => {
+    const rawText = (log.text || log.new_value || '').trim();
+    const cleanText = rawText.replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[^\]]*\]\s*/g, '').trim();
+    if (!cleanText && !log.new_value) return;
+
     const newLog: ActivityLog = {
       ...log,
+      text: cleanText || log.text,
       sys_id: generateSysId('act'),
       created_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
     };
-    setActivityLogs((prev) => [newLog, ...prev]);
+
+    let isDup = false;
+    setActivityLogs((prev) => {
+      // Prevent duplicate log entry: same table, record, type, and clean text
+      const alreadyExists = prev.some(
+        (existing) =>
+          existing.table_name === log.table_name &&
+          existing.record_id === log.record_id &&
+          existing.type === log.type &&
+          (existing.text || existing.new_value || '')
+            .replace(/\[\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[^\]]*\]\s*/g, '')
+            .trim() === cleanText
+      );
+      if (alreadyExists) {
+        isDup = true;
+        return prev;
+      }
+
+      const next = [newLog, ...prev];
+      if (typeof window !== 'undefined') localStorage.setItem('sn_data_activity', JSON.stringify(next));
+      return next;
+    });
+
+    if (!isDup) {
+      void syncRecordToSupabase('sys_activity_log', newLog);
+    }
   };
 
   const addAttachment = (att: Omit<Attachment, 'sys_id' | 'created_at'>): Attachment => {
@@ -1652,27 +2183,79 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         break;
       case 'problem':
         setProblems([]);
+        if (typeof window !== 'undefined') localStorage.removeItem('sn_data_problems');
         break;
       case 'change_request':
         setChanges([]);
+        if (typeof window !== 'undefined') localStorage.removeItem('sn_data_changes');
         break;
       case 'sc_req_item':
         setServiceRequests([]);
         if (typeof window !== 'undefined') localStorage.removeItem('sn_data_requests');
         break;
       default:
-        setCustomRecords((prev) => ({ ...prev, [table]: [] }));
+        setCustomRecords((prev) => {
+          const next = { ...prev, [table]: [] };
+          if (typeof window !== 'undefined') localStorage.setItem('sn_data_custom_records', JSON.stringify(next));
+          return next;
+        });
         break;
     }
   };
 
-  const loadDemoData = (table: string = 'incident') => {
-    if (table === 'incident' || !table) {
-      setIncidents(DEMO_INCIDENTS);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('sn_data_incidents', JSON.stringify(DEMO_INCIDENTS));
-        localStorage.setItem('sn_demo_explicitly_loaded', 'true');
-      }
+  const loadDemoData = (table?: string) => {
+    if (!table || table === 'incident') {
+      setIncidents((prev) => {
+        const existingNums = new Set(prev.map((i) => i.number));
+        const toAdd = SAMPLE_INCIDENTS.filter((i) => !existingNums.has(i.number));
+        const merged = [...prev, ...toAdd];
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('sn_data_incidents', JSON.stringify(merged));
+        }
+        return merged;
+      });
+    }
+    if (!table || table === 'problem') {
+      setProblems((prev) => {
+        const existingNums = new Set(prev.map((p) => p.number));
+        const toAdd = SAMPLE_PROBLEMS.filter((p) => !existingNums.has(p.number));
+        const merged = [...prev, ...toAdd];
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('sn_data_problems', JSON.stringify(merged));
+        }
+        return merged;
+      });
+    }
+    if (!table || table === 'change_request') {
+      setChanges((prev) => {
+        const existingNums = new Set(prev.map((c) => c.number));
+        const toAdd = SAMPLE_CHANGES.filter((c) => !existingNums.has(c.number));
+        const merged = [...prev, ...toAdd];
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('sn_data_changes', JSON.stringify(merged));
+        }
+        return merged;
+      });
+    }
+    if (!table || table === 'sc_req_item') {
+      setServiceRequests((prev) => {
+        const existingNums = new Set(prev.map((r) => r.number));
+        const toAdd = SAMPLE_REQUESTS.filter((r) => !existingNums.has(r.number));
+        const merged = [...prev, ...toAdd];
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('sn_data_requests', JSON.stringify(merged));
+        }
+        return merged;
+      });
+    }
+    if (!table || table === 'sys_user') {
+      setCustomUsers((prev) => {
+        const existingNames = new Set(prev.map((u) => u.user_name.toLowerCase()));
+        const toAdd = SAMPLE_USERS.filter((u) => !existingNames.has(u.user_name.toLowerCase()) && u.user_name !== 'admin');
+        const merged = [...prev, ...toAdd];
+        saveCustomUsers(merged);
+        return merged;
+      });
     }
   };
 
@@ -1680,7 +2263,6 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     setIncidents(INITIAL_INCIDENTS);
     setProblems(INITIAL_PROBLEMS);
     setChanges(INITIAL_CHANGES);
-    // Preserve accounts + session: only clear platform demo data keys.
     setGroups(INITIAL_GROUPS);
     setCis(INITIAL_CIS);
     setTables(INITIAL_TABLES);
@@ -1689,9 +2271,13 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
     setFlows(INITIAL_FLOWS);
     setServiceRequests(INITIAL_REQUESTS);
     setActivityLogs(INITIAL_ACTIVITY_LOGS);
+    setCustomRecords({});
     if (typeof window !== 'undefined') {
       [
         'sn_data_incidents',
+        'sn_data_problems',
+        'sn_data_changes',
+        'sn_data_custom_records',
         'sn_data_tables',
         'sn_data_client_scripts',
         'sn_data_business_rules',
@@ -1776,6 +2362,7 @@ export function PlatformProvider({ children }: { children: React.ReactNode }) {
         saveClientScript,
         saveBusinessRule,
         saveFlow,
+        saveServiceRequest,
         submitCatalogOrder,
         addActivityLog,
         addAttachment,

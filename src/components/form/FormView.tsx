@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { usePlatform } from '@/lib/store';
 import { Incident, TableDefinition, ColumnDefinition } from '@/lib/types';
+import { isUserMatch } from '@/lib/authUtils';
 import { createGForm, executeClientScript } from '@/lib/gFormSimulator';
 import ReferenceFieldLookupModal from './ReferenceFieldLookupModal';
 import ReferenceCardPreview from './ReferenceCardPreview';
@@ -41,6 +42,8 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
     cis,
     users,
     groups,
+    serviceRequests,
+    saveServiceRequest,
     tables,
     clientScripts,
     saveIncident,
@@ -106,6 +109,26 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
           state: 'Draft',
           risk: 'Moderate',
           priority: '3',
+          assigned_to: '',
+          assignment_group: '',
+        };
+      }
+      if (tableName === 'sc_req_item') {
+        const nextNum = 10000 + serviceRequests.length + 1;
+        return {
+          sys_id: 'new',
+          number: `REQ00${nextNum}`,
+          ritm_number: `RITM00${nextNum}`,
+          sctask_number: `SCTASK00${nextNum}`,
+          catalog_item_name: 'Service Request',
+          short_description: '',
+          description: '',
+          requested_for: currentUser.sys_id,
+          requested_by: currentUser.sys_id,
+          assigned_to: '',
+          assignment_group: '',
+          stage: 'Fulfillment',
+          state: '2',
         };
       }
       return { sys_id: 'new' };
@@ -114,15 +137,37 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
     if (tableName === 'incident') return incidents.find((i) => i.sys_id === sysId);
     if (tableName === 'problem') return problems.find((p) => p.sys_id === sysId);
     if (tableName === 'change_request') return changes.find((c) => c.sys_id === sysId);
+    if (tableName === 'sc_req_item') return serviceRequests.find((r) => r.sys_id === sysId);
+    if (tableName === 'task') {
+      return (
+        incidents.find((i) => i.sys_id === sysId) ||
+        problems.find((p) => p.sys_id === sysId) ||
+        changes.find((c) => c.sys_id === sysId) ||
+        serviceRequests.find((r) => r.sys_id === sysId)
+      );
+    }
     if (customRecords[tableName]) return customRecords[tableName].find((r) => r.sys_id === sysId);
     return null;
-  }, [tableName, sysId, isNew, incidents, problems, changes, customRecords, currentUser]);
+  }, [tableName, sysId, isNew, incidents, problems, changes, serviceRequests, customRecords, currentUser]);
 
-  const [formData, setFormData] = useState<Record<string, any>>(originalRecord || {});
+  const [prevRecordSysId, setPrevRecordSysId] = useState<string | undefined>(originalRecord?.sys_id);
+  const [formData, setFormData] = useState<Record<string, any>>(() => {
+    if (!originalRecord) return {};
+    return {
+      ...originalRecord,
+      work_notes: '',
+      comments: '',
+    };
+  });
 
-  useEffect(() => {
-    setFormData(originalRecord || {});
-  }, [originalRecord]);
+  if (originalRecord && originalRecord.sys_id !== prevRecordSysId) {
+    setPrevRecordSysId(originalRecord.sys_id);
+    setFormData({
+      ...originalRecord,
+      work_notes: '',
+      comments: '',
+    });
+  }
   const [formSectionTab, setFormSectionTab] = useState<'notes' | 'related' | 'resolution'>('notes');
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
   const [showLookupModal, setShowLookupModal] = useState<{ field: string; refTable: string } | null>(null);
@@ -232,11 +277,31 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
       savedRec = saveProblem(formData);
     } else if (tableName === 'change_request') {
       savedRec = saveChange(formData);
+    } else if (tableName === 'sc_req_item') {
+      savedRec = saveServiceRequest(formData);
+    } else if (tableName === 'task') {
+      const cls =
+        formData.sys_class_name ||
+        (formData.number?.startsWith('INC')
+          ? 'incident'
+          : formData.number?.startsWith('PRB')
+          ? 'problem'
+          : formData.number?.startsWith('CHG')
+          ? 'change_request'
+          : 'incident');
+      if (cls === 'incident') savedRec = saveIncident(formData);
+      else if (cls === 'problem') savedRec = saveProblem(formData);
+      else if (cls === 'change_request') savedRec = saveChange(formData);
+      else savedRec = saveServiceRequest(formData);
     } else {
       savedRec = saveCustomRecord(tableName, formData);
     }
 
-    setFormData(savedRec);
+    setFormData({
+      ...savedRec,
+      work_notes: '',
+      comments: '',
+    });
     setErrorMessages([]);
     setInfoMessages(['Record saved successfully.']);
 
@@ -258,18 +323,29 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
       ...formData,
       state: '6', // Resolved
       close_code: formData.close_code || 'Solved (Permanently)',
+      resolved_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      resolved_by: currentUser.sys_id,
     });
-    setFormData(resolved);
-    setInfoMessages(['Incident marked as Resolved.']);
+    setFormData({
+      ...resolved,
+      work_notes: '',
+      comments: '',
+    });
+    setInfoMessages(['Incident marked as Resolved. Work notes saved to activity stream.']);
   };
 
   const handleCloseIncident = () => {
     const closed = saveIncident({
       ...formData,
       state: '7', // Closed
+      closed_at: new Date().toISOString().replace('T', ' ').substring(0, 19),
     });
-    setFormData(closed);
-    setInfoMessages(['Incident closed.']);
+    setFormData({
+      ...closed,
+      work_notes: '',
+      comments: '',
+    });
+    setInfoMessages(['Incident closed. Internal work notes saved to activity stream.']);
   };
 
   const handleDelete = () => {
@@ -293,9 +369,13 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
     (a) => a.table_name === tableName && a.table_sys_id === formData.sys_id
   );
 
-  const callerUser = users.find((u) => u.sys_id === formData.caller_id);
-  const assignedUser = users.find((u) => u.sys_id === formData.assigned_to);
-  const assignedGroup = groups.find((g) => g.sys_id === formData.assignment_group);
+  const callerUser = users.find((u) => isUserMatch(formData.caller_id, u, users));
+  const assignedUser = users.find((u) => isUserMatch(formData.assigned_to, u, users));
+  const assignedGroup = groups.find(
+    (g) =>
+      g.sys_id === formData.assignment_group ||
+      g.name.toLowerCase() === String(formData.assignment_group || '').toLowerCase()
+  );
   const assignedCi = cis.find((c) => c.sys_id === formData.cmdb_ci);
 
   return (
@@ -935,7 +1015,33 @@ export default function FormView({ tableName, sysId }: FormViewProps) {
 
         {/* Tab 1: Notes & Activity Stream */}
         {formSectionTab === 'notes' && (
-          <ActivityStream tableName={tableName} recordId={formData.sys_id} />
+          <ActivityStream
+            tableName={tableName}
+            recordId={formData.sys_id}
+            draftWorkNotes={formData.work_notes || ''}
+            onWorkNotesChange={(val) => handleFieldChange('work_notes', val)}
+            draftComments={formData.comments || ''}
+            onCommentsChange={(val) => handleFieldChange('comments', val)}
+            recordData={formData}
+            onSaveWorkNoteImmediate={(text) => {
+              if (tableName === 'incident' && formData.sys_id && formData.sys_id !== 'new') {
+                saveIncident({
+                  ...formData,
+                  work_notes: text,
+                });
+                handleFieldChange('work_notes', '');
+              }
+            }}
+            onSaveCommentImmediate={(text) => {
+              if (tableName === 'incident' && formData.sys_id && formData.sys_id !== 'new') {
+                saveIncident({
+                  ...formData,
+                  comments: text,
+                });
+                handleFieldChange('comments', '');
+              }
+            }}
+          />
         )}
 
         {/* Tab 2: Related Records */}

@@ -137,6 +137,10 @@ export interface ServiceRequest {
   catalog_item_name: string;
   requested_for: string;
   requested_by: string;
+  assigned_to?: string;
+  assignment_group?: string;
+  short_description?: string;
+  description?: string;
   stage: 'Waiting for Approval' | 'Fulfillment' | 'Delivery' | 'Completed' | 'Closed Incomplete';
   state: '1' | '2' | '3' | '4';
   price: number;

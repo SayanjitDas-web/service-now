@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOut, Palette, UserRound, RotateCcw, ShieldCheck, ChevronDown, Trash2 } from 'lucide-react';
+import { LogOut, Palette, UserRound, ShieldCheck, ChevronDown, Trash2, Database } from 'lucide-react';
 import { usePlatform } from '@/lib/store';
 
 export default function AccountMenu() {
@@ -15,7 +15,6 @@ export default function AccountMenu() {
     setTheme,
     compactDensity,
     setCompactDensity,
-    resetToDefaultData,
     clearSeedData,
     loadDemoData,
     authError,
@@ -23,7 +22,6 @@ export default function AccountMenu() {
   } = usePlatform();
 
   const [open, setOpen] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const isImpersonating = currentUser.sys_id !== actualUser.sys_id;
 
@@ -242,6 +240,28 @@ export default function AccountMenu() {
               <>
                 <button
                   onClick={() => {
+                    loadDemoData();
+                    setOpen(false);
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    width: '100%',
+                    padding: '8px 10px',
+                    fontSize: '12.5px',
+                    borderRadius: '5px',
+                    color: '#0284c7',
+                    background: '#f0f9ff',
+                    marginBottom: '4px',
+                  }}
+                  title="Load realistic sample ITSM tickets, problems, and changes"
+                >
+                  <Database size={14} />
+                  <span>Load Sample Demo Records</span>
+                </button>
+                <button
+                  onClick={() => {
                     clearSeedData();
                     setOpen(false);
                   }}
@@ -255,37 +275,10 @@ export default function AccountMenu() {
                     borderRadius: '5px',
                     color: '#b91c1c',
                   }}
-                  title="Clear all seed incidents and tickets"
+                  title="Clear all ticket records"
                 >
                   <Trash2 size={14} />
-                  <span>Clear seed data (Incidents)</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    if (!confirmReset) {
-                      setConfirmReset(true);
-                      return;
-                    }
-                    resetToDefaultData();
-                    loadDemoData('incident');
-                    setConfirmReset(false);
-                    setOpen(false);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    width: '100%',
-                    padding: '8px 10px',
-                    fontSize: '12.5px',
-                    borderRadius: '5px',
-                    color: '#475569',
-                  }}
-                  title="Restore demo incidents, problems, changes and customizations"
-                >
-                  <RotateCcw size={14} />
-                  <span>{confirmReset ? 'Click again to confirm reset' : 'Restore demo data'}</span>
+                  <span>Clear all ticket records</span>
                 </button>
               </>
             )}

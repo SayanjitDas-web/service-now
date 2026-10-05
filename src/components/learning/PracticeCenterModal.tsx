@@ -42,7 +42,7 @@ export default function PracticeCenterModal({ onClose }: PracticeCenterModalProp
       summary: 'Practice impersonating an ITIL technician to test view access without changing passwords.',
       steps: [
         'Click the User Impersonate icon in the top Polaris navigation bar.',
-        'Select "Beth Anglin (beth.anglin)" or "David Loo (david.loo)".',
+        'Select another platform user from the user directory.',
         'Observe the yellow warning banner confirming impersonation mode.',
       ],
       hint: 'The Impersonate icon is located in the top-right header (administrators only). Sign in as admin to use it.',
@@ -58,23 +58,23 @@ export default function PracticeCenterModal({ onClose }: PracticeCenterModalProp
       category: 'ITSM Implementation',
       title: 'Lab 2: High Severity Incident Triage & Resolution',
       difficulty: 'Beginner',
-      summary: 'Triage P1 Critical Incident INC0010002, assign it, move to In Progress, and save work notes.',
+      summary: 'Triage an incident, assign it, move to In Progress, and save work notes.',
       steps: [
-        'Open the Incidents list from the All menu.',
-        'Double-click or click INC0010002 to open the form.',
+        'Open or create an incident from the All menu.',
+        'Open the incident form.',
         'Change State to "2 - In Progress".',
         'Set Assigned To or Assignment Group.',
         'Click Save or Update to commit changes.',
       ],
-      hint: 'Look for INC0010002 in the Incident list. Ensure you click Save on the form header.',
+      hint: 'Open an incident form, set State to In Progress with an Assignee, and click Save on the form header.',
       check: (s) => {
-        const inc = s.incidents.find((i: any) => i.number === 'INC0010002');
-        if (inc && inc.state === '2' && inc.assigned_to) {
-          return { passed: true, message: 'INC0010002 is In Progress and assigned!' };
+        const inc = s.incidents.find((i: any) => i.state === '2' && i.assigned_to);
+        if (inc) {
+          return { passed: true, message: `Incident ${inc.number} is In Progress and assigned!` };
         }
         return {
           passed: false,
-          message: 'INC0010002 is not yet In Progress with an assignee. Current state: ' + (inc?.state || 'Unknown'),
+          message: 'No incident found that is In Progress with an assignee.',
         };
       },
     },
@@ -133,8 +133,8 @@ export default function PracticeCenterModal({ onClose }: PracticeCenterModalProp
       ],
       hint: 'Open Service Catalog, click "Request" on an item, fill variables, and click Order Now.',
       check: (s) => {
-        if (s.serviceRequests.length > 1) {
-          const latest = s.serviceRequests[s.serviceRequests.length - 1];
+        if (s.serviceRequests.length >= 1) {
+          const latest = s.serviceRequests[0];
           return { passed: true, message: `Order verified! Latest Request: ${latest.number} (${latest.ritm_number})` };
         }
         return { passed: false, message: 'No new catalog order submitted yet.' };

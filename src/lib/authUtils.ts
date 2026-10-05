@@ -29,15 +29,110 @@ const CREDENTIALS_KEY = 'sn_auth_credentials';
 const SESSION_KEY = 'sn_auth_session';
 const CUSTOM_USERS_KEY = 'sn_auth_custom_users';
 
-/** Default demo passwords for seeded personas. Shown on the login screen. */
+/** Administrator credentials for system access. Shown on the login screen. */
 export const DEFAULT_DEMO_CREDENTIALS: { user_name: string; password: string }[] = [
   { user_name: 'admin', password: 'Admin123!' },
-  { user_name: 'beth.anglin', password: 'Beth123!' },
-  { user_name: 'david.loo', password: 'David123!' },
-  { user_name: 'fred.luddy', password: 'Fred123!' },
-  { user_name: 'abel.tuter', password: 'Abel123!' },
-  { user_name: 'itil.user', password: 'Itil123!' },
 ];
+
+/** Matches a record field (sys_id, user_name, or name) against a user account. */
+export function isUserMatch(
+  val: unknown,
+  user: User | null | undefined,
+  allUsers?: User[]
+): boolean {
+  if (!val || !user) return false;
+  let rawStr = '';
+  if (typeof val === 'object' && val !== null) {
+    rawStr = String(
+      (val as any).sys_id ||
+      (val as any).id ||
+      (val as any).value ||
+      (val as any).user_name ||
+      (val as any).name ||
+      ''
+    );
+  } else {
+    rawStr = String(val);
+  }
+  const target = rawStr.trim().toLowerCase();
+  if (!target) return false;
+
+  const userSysId = (user.sys_id || '').toLowerCase();
+  const userName = (user.user_name || '').toLowerCase();
+  const userFullName = (user.name || '').toLowerCase();
+  const userEmail = (user.email || '').toLowerCase();
+
+  // 1. Direct equality
+  if (
+    (userSysId && target === userSysId) ||
+    (userName && target === userName) ||
+    (userFullName && target === userFullName) ||
+    (userEmail && target === userEmail)
+  ) {
+    return true;
+  }
+
+  // 2. Compound display strings (e.g. "John Doe (john.doe)")
+  if (userName && (target.includes(`(${userName})`) || target.includes(` ${userName}`))) {
+    return true;
+  }
+  if (userFullName && (target.includes(userFullName) || userFullName.includes(target))) {
+    return true;
+  }
+
+  // 3. Directory cross-referencing if allUsers provided
+  if (allUsers && allUsers.length > 0) {
+    const matchedInDirectory = allUsers.find(
+      (u) =>
+        (u.sys_id && u.sys_id.toLowerCase() === target) ||
+        (u.user_name && u.user_name.toLowerCase() === target) ||
+        (u.name && u.name.toLowerCase() === target) ||
+        (u.email && u.email.toLowerCase() === target)
+    );
+    if (matchedInDirectory) {
+      if (
+        (userName && matchedInDirectory.user_name?.toLowerCase() === userName) ||
+        (userSysId && matchedInDirectory.sys_id?.toLowerCase() === userSysId) ||
+        (userEmail && matchedInDirectory.email && matchedInDirectory.email.toLowerCase() === userEmail)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/** Check if a user belongs to an assignment group or is the group manager */
+export function isUserInGroup(
+  user: User | null | undefined,
+  groupVal: unknown,
+  allGroups?: Array<{ sys_id: string; name: string; manager_id?: string }>
+): boolean {
+  if (!user || !groupVal) return false;
+  const target = String(
+    typeof groupVal === 'object' && groupVal !== null
+      ? (groupVal as any).sys_id || (groupVal as any).name || (groupVal as any).value || ''
+      : groupVal
+  ).trim().toLowerCase();
+  if (!target) return false;
+
+  if (allGroups) {
+    const grp = allGroups.find(
+      (g) => g.sys_id.toLowerCase() === target || g.name.toLowerCase() === target
+    );
+    if (grp) {
+      if (grp.manager_id && isUserMatch(grp.manager_id, user)) {
+        return true;
+      }
+      if (user.department && grp.name.toLowerCase().includes(user.department.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 
 function randomSalt(bytes = 16): string {
   if (typeof crypto !== 'undefined' && 'getRandomValues' in crypto) {
@@ -206,11 +301,10 @@ export function userCanAccessView(
   }
   if (user.roles.includes('end_user') && !user.roles.includes('itil') && !userIsAdmin(user)) {
     if (viewType === 'catalog' || viewType === 'catalog_item') return true;
-    if (viewType === 'list' && (table === 'kb_knowledge' || table === 'sc_req_item')) return true;
-    if (viewType === 'form' && (table === 'sc_req_item' || table === 'kb_knowledge')) return true;
-    // End users may view their own incidents but not problem/change config lists.
-    if (viewType === 'list' && table === 'incident') return true;
-    if (viewType === 'form' && table === 'incident') return true;
+    const taskTables = ['incident', 'problem', 'change_request', 'task', 'sc_req_item', 'kb_knowledge'];
+    if ((viewType === 'list' || viewType === 'form') && table && taskTables.includes(table)) {
+      return true;
+    }
     return false;
   }
   return true;

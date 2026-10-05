@@ -1,6 +1,6 @@
 -- ==============================================================================
--- ServiceNow Platform Simulator - Complete Supabase PostgreSQL Cloud Schema
--- Run this in your Supabase Project: Dashboard > SQL Editor > New Query > Run
+-- ServiceNow Data Tables Migration (Incidents, Problems, Changes, Requests, Logs)
+-- Apply in Supabase Dashboard > SQL Editor > New Query > Run
 -- ==============================================================================
 
 -- 1. INCIDENTS TABLE
@@ -145,14 +145,18 @@ CREATE TABLE IF NOT EXISTS public.kb_knowledge (
   sys_created_on TEXT DEFAULT TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
 );
 
--- Backwards compatibility aliases
+-- ==============================================================================
+-- BACKWARDS COMPATIBILITY VIEWS (sn_ prefix mapping)
+-- ==============================================================================
 CREATE OR REPLACE VIEW public.sn_incidents AS SELECT * FROM public.incident;
 CREATE OR REPLACE VIEW public.sn_problems AS SELECT * FROM public.problem;
 CREATE OR REPLACE VIEW public.sn_change_requests AS SELECT * FROM public.change_request;
 CREATE OR REPLACE VIEW public.sn_service_requests AS SELECT * FROM public.sc_req_item;
 CREATE OR REPLACE VIEW public.sn_activity_logs AS SELECT * FROM public.sys_activity_log;
 
--- Enable RLS
+-- ==============================================================================
+-- ROW LEVEL SECURITY (RLS) POLICIES
+-- ==============================================================================
 ALTER TABLE public.incident ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.problem ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.change_request ENABLE ROW LEVEL SECURITY;
@@ -161,29 +165,37 @@ ALTER TABLE public.sys_activity_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cmdb_ci ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.kb_knowledge ENABLE ROW LEVEL SECURITY;
 
--- Open policies for simulator
+-- incident policies
 DROP POLICY IF EXISTS incident_all ON public.incident;
 CREATE POLICY incident_all ON public.incident FOR ALL TO anon, authenticated USING (TRUE) WITH CHECK (TRUE);
 
+-- problem policies
 DROP POLICY IF EXISTS problem_all ON public.problem;
 CREATE POLICY problem_all ON public.problem FOR ALL TO anon, authenticated USING (TRUE) WITH CHECK (TRUE);
 
+-- change_request policies
 DROP POLICY IF EXISTS change_request_all ON public.change_request;
 CREATE POLICY change_request_all ON public.change_request FOR ALL TO anon, authenticated USING (TRUE) WITH CHECK (TRUE);
 
+-- sc_req_item policies
 DROP POLICY IF EXISTS sc_req_item_all ON public.sc_req_item;
 CREATE POLICY sc_req_item_all ON public.sc_req_item FOR ALL TO anon, authenticated USING (TRUE) WITH CHECK (TRUE);
 
+-- sys_activity_log policies
 DROP POLICY IF EXISTS sys_activity_log_all ON public.sys_activity_log;
 CREATE POLICY sys_activity_log_all ON public.sys_activity_log FOR ALL TO anon, authenticated USING (TRUE) WITH CHECK (TRUE);
 
+-- cmdb_ci policies
 DROP POLICY IF EXISTS cmdb_ci_all ON public.cmdb_ci;
 CREATE POLICY cmdb_ci_all ON public.cmdb_ci FOR ALL TO anon, authenticated USING (TRUE) WITH CHECK (TRUE);
 
+-- kb_knowledge policies
 DROP POLICY IF EXISTS kb_knowledge_all ON public.kb_knowledge;
 CREATE POLICY kb_knowledge_all ON public.kb_knowledge FOR ALL TO anon, authenticated USING (TRUE) WITH CHECK (TRUE);
 
--- Enable Realtime
+-- ==============================================================================
+-- REALTIME SUBSCRIPTIONS
+-- ==============================================================================
 DO $$
 BEGIN
   IF NOT EXISTS (

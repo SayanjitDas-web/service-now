@@ -153,7 +153,12 @@ function PlatformContent() {
             />
           ) : (
             <>
-              {activeView.type === 'list' && <ListView tableName={activeView.table} />}
+              {activeView.type === 'list' && (
+                <ListView
+                  key={`${activeView.table}_${activeView.filterPreset || ''}`}
+                  tableName={activeView.table}
+                />
+              )}
               {activeView.type === 'form' && (
                 <FormView key={`${activeView.table}_${activeView.sys_id}`} tableName={activeView.table} sysId={activeView.sys_id} />
               )}

@@ -16,7 +16,10 @@ export default function CatalogItemOrderModal({
   onClose,
   onSuccess,
 }: CatalogItemOrderModalProps) {
-  const { submitCatalogOrder } = usePlatform();
+  const { submitCatalogOrder, users, currentUser } = usePlatform();
+
+  // Selected recipient user (defaults to current user)
+  const [requestedFor, setRequestedFor] = useState(currentUser?.sys_id || '');
 
   // Populate defaults
   const [variables, setVariables] = useState<Record<string, any>>(() => {
@@ -40,7 +43,7 @@ export default function CatalogItemOrderModal({
 
     setIsSubmitting(true);
     setTimeout(() => {
-      const newReq = submitCatalogOrder(item.sys_id, variables);
+      const newReq = submitCatalogOrder(item.sys_id, variables, requestedFor || currentUser.sys_id);
       setIsSubmitting(false);
       onSuccess(newReq.number, newReq.ritm_number);
     }, 400);
@@ -75,6 +78,29 @@ export default function CatalogItemOrderModal({
                 <span>Price: <strong>${item.price.toFixed(2)} USD</strong></span>
               </div>
             </div>
+          </div>
+
+          {/* Recipient User (Deliver To / Requested For) */}
+          <div className="sn-form-group" style={{ marginBottom: '14px' }}>
+            <label className="sn-field-label">
+              <span className="sn-mandatory-asterisk">*</span>
+              Deliver To (Requested For)
+            </label>
+            <select
+              className="sn-field-select"
+              value={requestedFor}
+              onChange={(e) => setRequestedFor(e.target.value)}
+              style={{ fontWeight: 500 }}
+            >
+              {users.map((u) => (
+                <option key={u.sys_id} value={u.sys_id}>
+                  {u.name} ({u.user_name}) {u.sys_id === currentUser.sys_id ? '— (Myself)' : ''}
+                </option>
+              ))}
+            </select>
+            <span style={{ fontSize: '11px', color: 'var(--now-text-muted)', marginTop: '2px' }}>
+              Select the employee account that will receive and own this requested item.
+            </span>
           </div>
 
           {/* Dynamic Variables Form */}

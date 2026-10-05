@@ -422,7 +422,7 @@ a {
 .sn-nav-tree {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 0;
+  padding: 8px 0 36px 0;
 }
 
 .sn-nav-group-header {
@@ -442,11 +442,22 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 16px 6px 28px;
+  gap: 8px;
+  padding: 6px 14px 6px 24px;
   color: var(--now-text-main);
   font-size: 12.5px;
   cursor: pointer;
   transition: all 0.12s ease;
+  min-width: 0;
+}
+
+.sn-nav-item > span:first-child,
+.sn-nav-item > div:first-child span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
 }
 
 .sn-nav-item:hover {
@@ -580,7 +591,7 @@ a {
   gap: 8px;
 }
 
-.sn-filter-row {
+.sn-condition-builder .sn-filter-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -599,13 +610,14 @@ a {
 .sn-table-wrapper {
   flex: 1;
   overflow: auto;
+  background: var(--now-bg-surface);
 }
 
 .sn-table {
   width: 100%;
   border-collapse: collapse;
   text-align: left;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 
 .sn-table thead {
@@ -613,23 +625,71 @@ a {
   position: sticky;
   top: 0;
   z-index: 10;
-  border-bottom: 2px solid var(--now-border);
 }
 
-.sn-table th {
-  padding: 8px 12px;
+.sn-table thead tr:first-child th {
+  padding: 8px 10px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--now-text-secondary);
+  border-bottom: 1px solid var(--now-border-light);
   border-right: 1px solid var(--now-border-light);
   white-space: nowrap;
+  background: #f8fafc;
+  user-select: none;
+}
+
+.sn-table thead tr:first-child th:hover {
+  background: #f1f5f9;
+}
+
+.sn-table-filter-row {
+  background: #f8fafc;
+}
+
+.sn-table-filter-row th {
+  padding: 4px 6px;
+  background: #f8fafc;
+  border-right: 1px solid var(--now-border-light);
+  border-bottom: 2px solid var(--now-border);
+  font-weight: normal;
+  vertical-align: middle;
+}
+
+.sn-col-filter-input,
+.sn-col-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 25px;
+  padding: 2px 7px;
+  font-size: 11.5px;
+  border: 1px solid var(--now-border);
+  border-radius: var(--now-radius-sm);
+  background: #ffffff;
+  color: var(--now-text-main);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.sn-col-filter-input:focus,
+.sn-col-search-input:focus {
+  border-color: var(--now-green-primary);
+  box-shadow: 0 0 0 2px rgba(0, 163, 137, 0.15);
+}
+
+.sn-col-filter-input::placeholder,
+.sn-col-search-input::placeholder {
+  color: #94a3b8;
+  font-size: 11px;
 }
 
 .sn-table td {
-  padding: 7px 12px;
+  padding: 7px 10px;
   border-bottom: 1px solid var(--now-border-light);
   border-right: 1px solid var(--now-border-light);
   color: var(--now-text-main);
   white-space: nowrap;
+  vertical-align: middle;
 }
 
 .sn-table tbody tr:hover {
@@ -649,17 +709,6 @@ a {
 .sn-link-record:hover {
   text-decoration: underline;
   color: var(--now-green-primary);
-}
-
-/* ServiceNow Column Search Input Row */
-.sn-col-search-input {
-  width: 100%;
-  padding: 2px 4px;
-  font-size: 11px;
-  border: 1px solid var(--now-border);
-  border-radius: 2px;
-  background: #ffffff;
-  color: var(--now-text-main);
 }
 
 /* Table Footer / Pagination */

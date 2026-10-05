@@ -43,7 +43,7 @@ export async function ensureIdentitySeed(): Promise<{ seeded: boolean; reason: s
     const haveGroups = new Set(
       ((existingGroups ?? []) as Array<{ name: string }>).map((g) => g.name.toLowerCase())
     );
-    const missingGroups = GROUP_SEED.filter((g) => !haveGroups.has(g.name));
+    const missingGroups = GROUP_SEED.filter((g) => !haveGroups.has(g.name.toLowerCase()));
     if (missingGroups.length > 0) {
       const { error } = await sb.from('sys_group').insert(missingGroups);
       if (error) return { seeded: false, reason: `group seed blocked by RLS: ${error.message}` };
